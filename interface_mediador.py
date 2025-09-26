@@ -20,7 +20,7 @@ verde_qq_hover = "#3E8E49"
 ctk.set_appearance_mode("dark")
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, auto_start=False):
         self.root = root
         self.root.title("Robô Mediador")
         self.root.geometry("800x450")
@@ -126,6 +126,27 @@ class App:
 
         self.load_initial_settings()
 
+        if auto_start:
+            self.auto_start_process()
+
+    def auto_start_process(self):
+        last_excel_path = self.load_last_excel_path_from_config()
+
+        if not self.caminho_download:
+            messagebox.showwarning("Atenção", "Pasta de trabalho não definida. Não é possível iniciar automaticamente.")
+            return
+
+        if not last_excel_path or not os.path.exists(last_excel_path):
+            messagebox.showwarning("Atenção", "Caminho do último Excel não encontrado ou inválido. Não é possível iniciar automaticamente.")
+            return
+        
+        self.caminho_arquivo = last_excel_path
+        self.iniciar_processamento()
+    
+    def load_last_excel_path_from_config(self):
+        from robo_mediador import load_last_excel_path
+        return load_last_excel_path()
+
 
     def load_initial_settings(self):
         last_path = load_last_work_path()
@@ -219,5 +240,6 @@ class App:
 
 if __name__ == "__main__":
     root = ctk.CTk()
-    app = App(root)
+    should_auto_start = '--auto-start' in sys.argv
+    app = App(root, auto_start=should_auto_start)
     root.mainloop()
