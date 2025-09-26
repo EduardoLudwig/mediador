@@ -25,14 +25,6 @@ config_file_path = os.path.join(APP_CONFIG_DIR, "config.ini")
 execucao_registrada = False
 caminho_log_hist = None
 
-# IGNORE OS COMENTÁRIOS
-
-# fazer o robo do mediador atualizar os procvs de dias de atraso
-
-# deixar invisivel / headless
-
-# ver as ideias do keep
-
 ################################################################
 
 def stop_execution():
@@ -553,7 +545,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             palavras_para_buscar = ["rodoviária", "rodov", "peix", "peixarias", "rodoviaria", "açougues", "rodoviárias", "rodoviarias", "transportes", "passageiros"]
 
                             print("Buscando por palavras-chave na aba de visualização...")
-                            time.sleep(2) # Espera para garantir que o conteúdo da página carregou
+                            time.sleep(2)
 
                             texto_da_pagina = browser.find_element(By.TAG_NAME, "body").text
                             texto_da_pagina_lower = texto_da_pagina.lower()
@@ -702,8 +694,6 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         sheet = workbook.active
         print("Arquivo Excel carregado")
     except Exception as e:
-        # A variável arquivo_log pode não existir se base_path_param não for fornecido
-        # Vamos criar um log de fallback no diretório do script
         log_fallback = "log_erro_inicializacao.txt"
         log_erro(arquivo_log if 'arquivo_log' in locals() else log_fallback, f'Erro ao carregar o arquivo Excel: {e}')
         return

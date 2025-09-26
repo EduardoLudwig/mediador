@@ -1,1 +1,10 @@
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+build/
+dist/
+*.spec
+
+Sindicatos Mediador.xlsx

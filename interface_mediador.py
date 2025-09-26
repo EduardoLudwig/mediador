@@ -2,8 +2,9 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import threading
 import sys
-import os 
-from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path
+import os
+import pythoncom
+from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path
 
 def resource_path(relative_path):
     try:
@@ -31,8 +32,8 @@ class App:
         self.top_frame = ctk.CTkFrame(self.root, fg_color="transparent", height=40)
         self.top_frame.pack(side="top", fill="x", padx=10, pady=5)
 
-        self.top_frame.grid_columnconfigure(0, weight=1) # Coluna 0 (label) vai expandir
-        self.top_frame.grid_columnconfigure(1, weight=0) # Coluna 1 (botão) não expande
+        self.top_frame.grid_columnconfigure(0, weight=1)
+        self.top_frame.grid_columnconfigure(1, weight=0) 
 
         self.label_download_path = ctk.CTkLabel(self.top_frame, text="Nenhuma pasta de trabalho selecionada.", font=("arial", 12, "bold"))
         self.label_download_path.grid(row=0, column=0, sticky="n", padx=(60, 10), pady=10)
@@ -53,9 +54,8 @@ class App:
         self.frame_fundo = ctk.CTkFrame(self.root, fg_color="transparent")
         self.frame_fundo.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # 1. CRIAMOS E POSICIONAMOS O RODAPÉ PRIMEIRO
         self.loja_inicial_frame = ctk.CTkFrame(self.frame_fundo, fg_color="transparent")
-        # Dizemos para ele ficar "ancorado" na parte de baixo do frame_fundo
+
         self.loja_inicial_frame.pack(side="bottom", pady=(10, 0))
 
         self.central_frame = ctk.CTkFrame(self.frame_fundo, fg_color="transparent")
@@ -130,7 +130,7 @@ class App:
             self.auto_start_process()
 
     def auto_start_process(self):
-        last_excel_path = self.load_last_excel_path_from_config()
+        last_excel_path = load_last_excel_path()
 
         if not self.caminho_download:
             messagebox.showwarning("Atenção", "Pasta de trabalho não definida. Não é possível iniciar automaticamente.")
@@ -160,6 +160,18 @@ class App:
         else:
             print("Nenhuma pasta de trabalho anterior encontrada ou o caminho é inválido.")
 
+        last_excel_path = load_last_excel_path()
+        if last_excel_path and os.path.exists(last_excel_path):
+            self.caminho_arquivo = last_excel_path
+            print(f"Caminho do Excel anterior carregado: {last_excel_path}")
+
+            if self.caminho_download:
+                self.botao_iniciar.configure(state="normal")
+                self.status.configure(text="Caminho do Excel carregado.")
+        else:
+            print("Nenhum caminho do Excel anterior encontrado.")
+                
+
     def selecionar_excel(self):
         self.caminho_arquivo = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx")])
         if self.caminho_arquivo:
@@ -188,6 +200,7 @@ class App:
         self.thread.start()
 
     def executar_main(self, download_path, loja_inicial, update_callback):
+        pythoncom.CoInitialize()
         try:
             main(self.caminho_arquivo, base_path_param=download_path, loja_inicial=loja_inicial, update_callback=update_callback) 
             self.status.configure(text="Processo concluído com sucesso.")
@@ -207,6 +220,8 @@ class App:
                 except Exception as e:
                     print(f"Erro ao fechar o navegador no finally da interface: {e}")
 
+            pythoncom.CoUninitialize()
+
     def update_processing_store_label(self, loja_info):
         self.processing_store_label.configure(text=f"Loja: {loja_info}")
     
@@ -215,10 +230,10 @@ class App:
         self.caminho_download = filedialog.askdirectory(title="Selecione a pasta de trabalho principal")
         if self.caminho_download:
             save_last_work_path(self.caminho_download)
-            # Mostra apenas os últimos 50 caracteres para não quebrar a interface
+
             caminho_exibicao = "..." + self.caminho_download[-50:] if len(self.caminho_download) > 50 else self.caminho_download
             self.label_download_path.configure(text=f"Pasta selecionada: {caminho_exibicao}")
-            # Habilita o botão de iniciar apenas se o arquivo excel também já foi escolhido
+            
             if self.caminho_arquivo:
                 self.botao_iniciar.configure(state="normal")
         else:
