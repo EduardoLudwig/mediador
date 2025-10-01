@@ -6,6 +6,9 @@ import os
 import pythoncom
 from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path
 
+# adicionar o icone de giro para mostrar que esta rodando (isso já fiz no rodo dos ccts do comuniq, só copiar e colar)
+# mensagem de alerta para caso de falta de espaço (isso seria para a rede)
+
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
@@ -175,6 +178,7 @@ class App:
     def selecionar_excel(self):
         self.caminho_arquivo = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx")])
         if self.caminho_arquivo:
+            save_last_excel_path(self.caminho_arquivo)
             self.status.configure(text="Arquivo selecionado com sucesso.")
             if self.caminho_download:
                 self.botao_iniciar.configure(state="normal")
