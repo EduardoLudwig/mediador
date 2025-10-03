@@ -112,7 +112,7 @@ def obter_caminho_arquivo_excel():
     file_path = filedialog.askopenfilename(
         title="Selecione o arquivo do Excel",
         initialdir=initial_dir,
-        filetypes=[("Arquivos Excel", "*.xlsx")]
+        filetypes=[("Arquivos Excel", "*.xlsx", "*.xlsb")]
     )
     if file_path:
         save_last_excel_path(file_path) 
@@ -737,7 +737,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         chrome_options.add_argument("disable-infobars")
         chrome_options.add_argument("--ignore-certificate-errors")
         chrome_options.add_argument("--allow-running-insecure-content")
-        chrome_options.add_argument("--headless=new")
+        #chrome_options.add_argument("--headless=new")
         
         final_download_path = os.path.abspath(download_dir)
         print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
@@ -776,16 +776,19 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 
                 if numloja_atual == 'None': continue
 
-                cnpj = str(row[2])
-                uf = str(row[4])
-                municipio = str(row[21])
-                cidade_sind = str(row[20])
-                codsind = str(row[1])
-                numloja = str(row[0])
+                # testando ler o acompanhamentos
+
+                cnpj = str(row[22])        # Coluna W (Índice 22)
+                uf = str(row[4])           # Coluna E (Índice 4)
+                municipio = str(row[5])    # Coluna F (Índice 5)
+                cidade_sind = str(row[23]) # Coluna X (Índice 23)
+                codsind = str(row[1])      # Coluna B (Índice 1)
+                numloja = str(row[0])      # Coluna A (Índice 0)
+
                 dias_de_atraso = 0
                 if len(row) > 23 and row[23] is not None:
                     try:
-                        dias_de_atraso = float(row[23])
+                        dias_de_atraso = float(row[3])
                     except (ValueError, TypeError):
                         dias_de_atraso = 0
                 primeira_letra_municipio = primeira_letra(municipio)
