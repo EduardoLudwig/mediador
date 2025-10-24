@@ -224,12 +224,12 @@ def organizar_historicos(diretorio):
     try:
         arquivos = list(Path(diretorio).glob("histórico de buscas_*.txt"))
 
-        if len(arquivos) <=2:
+        if len(arquivos) <= 30:
             return
         
         arquivos.sort(key=lambda f: f.stat().st_mtime, reverse=True)
 
-        for arquivo in arquivos[2:]:
+        for arquivo in arquivos[30:]:
             try:
                 os.remove(arquivo)
                 print(f"Removido: {arquivo}")
@@ -542,7 +542,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             handle_nova_aba = (set(browser.window_handles) - janelas_antes_do_clique).pop()
                             browser.switch_to.window(handle_nova_aba)
 
-                            palavras_para_buscar = ["rodoviária", "rodov", "peix", "peixarias", "rodoviaria", "açougues", "rodoviárias", "rodoviarias", "transportes", "passageiros"]
+                            palavras_para_buscar = ["rodoviária", "rodov", "peix", "peixarias", "rodoviaria", "açougues", "rodoviárias", "rodoviarias"]
 
                             print("Buscando por palavras-chave na aba de visualização...")
                             time.sleep(2)
@@ -737,7 +737,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         chrome_options.add_argument("disable-infobars")
         chrome_options.add_argument("--ignore-certificate-errors")
         chrome_options.add_argument("--allow-running-insecure-content")
-        chrome_options.add_argument("--headless=new")
+        #chrome_options.add_argument("--headless=new")
         
         final_download_path = os.path.abspath(download_dir)
         print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
