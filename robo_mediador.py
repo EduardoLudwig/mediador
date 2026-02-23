@@ -737,7 +737,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         chrome_options.add_argument("disable-infobars")
         chrome_options.add_argument("--ignore-certificate-errors")
         chrome_options.add_argument("--allow-running-insecure-content")
-        #chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--headless=new")
         
         final_download_path = os.path.abspath(download_dir)
         print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
