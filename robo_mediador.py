@@ -775,9 +775,11 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                         continue
                 
                 if numloja_atual == 'None': continue
+                
 
+                # MUDANÇA DANIELY
                 # testando ler o acompanhamentos
-
+                # pedir para dani fazer esses ajustes e validar
                 cnpj = str(row[22])        # Coluna W (Índice 22)
                 uf = str(row[4])           # Coluna E (Índice 4)
                 municipio = str(row[5])    # Coluna F (Índice 5)

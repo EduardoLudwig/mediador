@@ -7,6 +7,8 @@ import pythoncom
 from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path
 
 # adicionar o icone de giro para mostrar que esta rodando (isso já fiz no rodo dos ccts do comuniq, só copiar e colar)
+
+
 # mensagem de alerta para caso de falta de espaço (isso seria para a rede)
 
 # caso ler fechada ou #N/D em QUALQUER UM DOS ITENS DEVE PULAR AQUELA LOJA  
