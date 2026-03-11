@@ -9,7 +9,6 @@ from selenium.common.exceptions import NoSuchElementException
 import os
 import unicodedata
 from tkinter import Tk, filedialog
-import openpyxl
 import time
 import glob
 from datetime import datetime
@@ -17,6 +16,7 @@ from pathlib import Path
 import win32com.client
 import configparser
 import shutil
+import pandas as pd
 
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboMediador")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
@@ -112,7 +112,7 @@ def obter_caminho_arquivo_excel():
     file_path = filedialog.askopenfilename(
         title="Selecione o arquivo do Excel",
         initialdir=initial_dir,
-        filetypes=[("Arquivos Excel", "*.xlsx", "*.xlsb")]
+        filetypes=[("Arquivos Excel", "*.xlsx *.xlsb")],
     )
     if file_path:
         save_last_excel_path(file_path) 
@@ -224,12 +224,12 @@ def organizar_historicos(diretorio):
     try:
         arquivos = list(Path(diretorio).glob("histórico de buscas_*.txt"))
 
-        if len(arquivos) <=2:
+        if len(arquivos) <= 30:
             return
         
         arquivos.sort(key=lambda f: f.stat().st_mtime, reverse=True)
 
-        for arquivo in arquivos[2:]:
+        for arquivo in arquivos[30:]:
             try:
                 os.remove(arquivo)
                 print(f"Removido: {arquivo}")
@@ -542,9 +542,24 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             handle_nova_aba = (set(browser.window_handles) - janelas_antes_do_clique).pop()
                             browser.switch_to.window(handle_nova_aba)
 
-                            palavras_para_buscar = ["rodoviária", "rodov", "peix", "peixarias", "rodoviaria", "açougues", "rodoviárias", "rodoviarias", "transportes", "passageiros"]
+                            # arrumar
+                            palavras_para_buscar = ["rodoviária", 
+                                                    "rodov", "peix", "peixarias",
+                                                      "rodoviaria", "açougues", "rodoviárias", 
+                                                      "rodoviarias", "ATACADISTA", "FARMACEUTICOS", 
+                                                      "OPTICO", "ATAC DE AL E BEB EM GERAL", "SUPERMERCADOS", 
+                                                      "HIPERMERCADOS", "COMERCIO DE BENS E DE SERVICOS",
+                                                        "ORGANIZACAO DAS COOPERATIVAS",
+                                                        "COMERCIO DE VEICULOS", "VAREJ. DE GEN. ALIM.",
+                                                          "ESTABELECIMENTOS DE PRESTACAO DE SERVICOS FUNERARIOS",
+                                                          "GENEROS ALIMENTICIOS", "SINDICATO DOS LOJISTAS", "GENEROS ALIM",
+                                                            "MAT.CONSTR. LOUCAS, TINTAS, FERRAG.",
+                                                          "ATAC DE PRODUTOS QUIM", "OCERGS-SINDICATO E ORGANIZACAO"]
+                            
+                            #palavras_para_buscar = []
 
                             print("Buscando por palavras-chave na aba de visualização...")
+                            
                             time.sleep(2)
 
                             texto_da_pagina = browser.find_element(By.TAG_NAME, "body").text
@@ -660,7 +675,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
         
 ################################################################
 
-def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_callback=None):
+def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_callback=None): #parte principal do código
     global _stop_flag, _browser_driver
     global mediador_dir, historico_dir, download_dir, atrasados_dir
     global pasta_log, arquivo_log, diretorio_log, caminho_log_hist
@@ -690,8 +705,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
             if not caminho_excel:
                 print('Nenhum arquivo selecionado, encerrando programa.')
                 return
-        workbook = openpyxl.load_workbook(caminho_excel, data_only=True)
-        sheet = workbook.active
+        df = pd.read_excel(caminho_excel)
         print("Arquivo Excel carregado")
     except Exception as e:
         log_fallback = "log_erro_inicializacao.txt"
@@ -701,13 +715,17 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
     loja_final_para_iniciar = None
     iniciar_processamento_agora = not bool(loja_inicial)
 
+
+    todas_as_lojas = []
+    loja_inicial_num = None
+
     if not iniciar_processamento_agora:
         try:
             loja_inicial_num = int(loja_inicial)
             print(f"Procurando por loja inicial a partir de: {loja_inicial_num}")
-
-            todas_as_lojas = []
-            for row in sheet.iter_rows(min_row=2, values_only=True):
+           
+            for row in df.itertuples(index=False):
+                numloja = row[0]
                 try:
                     if row[0] is not None:
                         todas_as_lojas.append(int(row[0]))
@@ -737,7 +755,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         chrome_options.add_argument("disable-infobars")
         chrome_options.add_argument("--ignore-certificate-errors")
         chrome_options.add_argument("--allow-running-insecure-content")
-        #chrome_options.add_argument("--headless=new")
+      #  chrome_options.add_argument("--headless=new")
         
         final_download_path = os.path.abspath(download_dir)
         print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
@@ -760,7 +778,13 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
             browser.get('http://www3.mte.gov.br/sistemas/mediador/ConsultarInstColetivo')
             print("Página carregada")
 
-            for row in sheet.iter_rows(min_row=2, values_only=True):
+            for row in df.itertuples(index=False):
+                numloja = row[0]
+                try:
+                    if row[0] is not None:
+                        todas_as_lojas.append(int(row[0]))
+                except (ValueError, TypeError):
+                    continue
                 if _stop_flag:
                     print("Execução interrompida pela interface.")
                     break
@@ -776,19 +800,24 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 
                 if numloja_atual == 'None': continue
                 
-
-                # MUDANÇA DANIELY
-                # testando ler o acompanhamentos
-                # pedir para dani fazer esses ajustes e validar
-                cnpj = str(row[22])        # Coluna W (Índice 22)
-                uf = str(row[4])           # Coluna E (Índice 4)
-                municipio = str(row[5])    # Coluna F (Índice 5)
-                cidade_sind = str(row[23]) # Coluna X (Índice 23)
-                codsind = str(row[1])      # Coluna B (Índice 1)
-                numloja = str(row[0])      # Coluna A (Índice 0)
+                #indices sindicatos(edu)
+                #cnpj = str(row[2])         
+                #uf = str(row[4])
+                #municipio = str(row[21])
+                #cidade_sind = str(row[20])
+                #codsind = str(row[1])
+                #numloja = str(row[0])
+                
+                #indices acompanhamentos
+                cnpj = str(row[2])
+                uf = str(row[4])
+                municipio = str(row[5])
+                cidade_sind = str(row[9])
+                codsind = str(row[1])
+                numloja = str(row[0]) 
 
                 dias_de_atraso = 0
-                if len(row) > 23 and row[23] is not None:
+                if len(row) > 3 and row[3] is not None:
                     try:
                         dias_de_atraso = float(row[3])
                     except (ValueError, TypeError):
@@ -802,7 +831,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 if not cnpj or cnpj == 'None':
                     print(f"CNPJ ausente ou inválido, pulando: CNPJ lido: {cnpj}")
                     continue
-                
+                #chama o selenium para o site
                 movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
 
             if not _stop_flag:

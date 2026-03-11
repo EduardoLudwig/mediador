@@ -180,14 +180,14 @@ class App:
                 
 
     def selecionar_excel(self):
-        self.caminho_arquivo = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx")])
+        self.caminho_arquivo = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx *.xlsb")])
         if self.caminho_arquivo:
             save_last_excel_path(self.caminho_arquivo)
             self.status.configure(text="Arquivo selecionado com sucesso.")
             if self.caminho_download:
                 self.botao_iniciar.configure(state="normal")
         else:
-            self.status.configure(text="Arquivo deve ser excel (.xlsx)")
+            self.status.configure(text="Arquivo deve ser em formato excel (.xlsx ou .xlsb).")
             self.botao_iniciar.configure(state="disabled")
 
     def iniciar_processamento(self):
