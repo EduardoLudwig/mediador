@@ -17,6 +17,8 @@ import win32com.client
 import configparser
 import shutil
 import pandas as pd
+import re
+from selenium.common.exceptions import TimeoutException
 
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboMediador")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
@@ -131,6 +133,16 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_past
     max_tentativas = 3
     tentativa = 0
     
+    #mudança 5 - nova regex para extrair a parte da cidade sem números ou hífens, considerando possíveis variações de formatação
+    if cidade_sind: 
+        match = re.search(r"-\s*([^0-9-]+?)(?:\s*-|\s+\d|$)", cidade_sind)
+        if match:
+            cidade_sind_limpa = match.group(1).strip().upper()
+        else:
+            cidade_sind_limpa = cidade_sind.replace("'", "").strip().upper()
+    else:
+        cidade_sind_limpa = "aa"
+
     novo_caminho = None
     caminho_final_pdf = None 
     pasta_municipio_para_retorno = None 
@@ -172,7 +184,7 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_past
             codsind_formatado = str(codsind).zfill(4)
             municipio_sem_acentos = remove_acentos(municipio)
             municipio_formatado = municipio_sem_acentos.upper()
-            novo_nome_doc = f"{numloja_formatado}_{municipio_formatado}_{cidade_sind}_SIND{codsind_formatado}{sufixo_formatado}.doc"
+            novo_nome_doc = f"{numloja_formatado}_{municipio_formatado}_{cidade_sind_limpa}_SIND{codsind_formatado}{sufixo_formatado}.doc"
 
 
             if usar_pasta_municipio:
@@ -189,15 +201,11 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_past
                 
                 os.rename(latest_file, novo_caminho)
                 print(f"Arquivo renomeado para: {novo_nome_doc}")
-                
+
                 if conversao_doc_para_pdf(novo_caminho):
-                    try:
-                        os.remove(novo_caminho)
-                        print(f"Arquivo .doc excluído após conversão: {novo_caminho}")
-                    except Exception as e:
-                        log_erro(arquivo_log, f"Erro ao excluir o .doc após conversão: {str(e)}")
-                    
+
                     return True, caminho_final_pdf, pasta_municipio_para_retorno 
+                
                 else:
                     print("Conversão para PDF falhou, mantendo arquivo .doc")
                     return False, None, None 
@@ -299,38 +307,74 @@ def subpasta_municipio(numloja, municipio):
 
 ################################################################
 
-def conversao_doc_para_pdf(caminho_doc):
+def conversao_doc_para_pdf(caminho_doc): # Mudança 6 // talvez refazer
     if _stop_flag: return False
     word = None
+    doc = None
+
     try:
-        word = win32com.client.Dispatch("Word.Application")
+        word = win32com.client.DispatchEx("Word.Application")
+        
         word.Visible = False
+        word.DisplayAlerts = 0 
+        word.ScreenUpdating = False 
 
         caminho_doc_absoluto = os.path.abspath(caminho_doc)
-        print(f"INFO: Convertendo para PDF o arquivo: {caminho_doc_absoluto}")
-
-        doc = word.Documents.Open(caminho_doc_absoluto)
-        caminho_pdf = caminho_doc_absoluto.replace(".doc", ".pdf")
+        print(f"INFO: Convertendo em segundo plano (processo isolado): {caminho_doc_absoluto}")
+        doc = word.Documents.Open(FileName=caminho_doc_absoluto, ReadOnly=True, Visible=False)
+        
+        caminho_pdf = os.path.splitext(caminho_doc_absoluto)[0] + ".pdf"
         doc.SaveAs(caminho_pdf, FileFormat=17)
-        doc.Close()
-        word.Quit()
-        if _stop_flag:
-            try:
-                word.Quit()
-            except:
-                pass
-            return False
+        
+        doc.Close(False)
+        doc = None
 
-        print(f"Arquivo convertido para PDF: {caminho_pdf}")
-        return True
+        word.Quit()
+        word = None
+
+        if os.path.exists(caminho_pdf) and os.path.exists(caminho_doc_absoluto):
+            os.remove(caminho_doc_absoluto)
+         
+        return True 
+
     except Exception as e:
-        log_erro(arquivo_log, f"Erro ao converter DOC para PDF: {str(e)}")
+        if 'arquivo_log' in globals():
+            log_erro(arquivo_log, f"Erro ao converter DOC para PDF: {str(e)}")
+        
+        if doc:
+            try: doc.Close(False)
+            except: pass
         if word:
-            try:
-                word.Quit()
-            except:
-                pass
+            try: word.Quit()
+            except: pass
         return False
+################################################################   # Função nova adicionada para aguardar elementos de forma mais robusta,
+                                                                   # evitando erros comuns de timing e carregamento do site.
+                                                                   # Substitui os trechos de código repetitivos de espera e clique/preenchimento 
+                                                                   # no def movimentacao_site, deixando o código mais limpo e fácil de manter.
+
+def aguardar_e_clicar(browser, xpath, tempo=30): # Mudança 7 
+    try:
+        elemento = WebDriverWait(browser, tempo).until(
+            EC.element_to_be_clickable((By.XPATH, xpath))
+        )
+        elemento.click()
+        return elemento
+    except TimeoutException:
+        print(f"Erro: Tempo esgotado esperando o elemento: {xpath}")
+        return None
+
+def aguardar_e_preencher(browser, xpath, texto, tempo=15):
+    try:
+        elemento = WebDriverWait(browser, tempo).until(
+            EC.presence_of_element_located((By.XPATH, xpath))
+        )
+        elemento.clear() # Garante que o campo esteja vazio
+        elemento.send_keys(texto)
+        return elemento
+    except TimeoutException:
+        print(f"Erro: Tempo esgotado para preencher: {xpath}")
+        return None
 
 ################################################################
 
@@ -342,82 +386,67 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
         browser.refresh()
         time.sleep(3)
         if _stop_flag: return
+
         print("Inserindo informações no site e iniciando as buscas")
-        cnpj_checkbox = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="chkNRCNPJ"]')))
-        cnpj_checkbox.click()
+        
+        #cnpj checkbox
+        aguardar_e_clicar(browser, '//*[@id="chkNRCNPJ"]')
         if _stop_flag: return
 
-        cnpj_input = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="txtNRCNPJ"]')))
-        cnpj_input.send_keys(cnpj)
+        #cnpj input
+        aguardar_e_preencher(browser, '//*[@id="txtNRCNPJ"]', cnpj)
         if _stop_flag: return
 
         print("Selecionando opção da categoria")
-        categoria_checkbox = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="chkCategoria"]')))
-        categoria_checkbox.click()
+        #categoria checkbox
+        aguardar_e_clicar(browser, '//*[@id="chkCategoria"]')
         if _stop_flag: return
 
         print("Inserindo categoria 'Comercio'")
-        categoria_input = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="txtDSCategoria"]')))
-        categoria_input.send_keys('Comercio')
+        #categoria input
+        aguardar_e_preencher(browser, '//*[@id="txtDSCategoria"]', 'Comercio')
         if _stop_flag: return
 
         print("Selecionando o Tipo de Instrumento")
-        tipo_instrumento = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="cboTPRequerimento"]/option[5]')))
-        tipo_instrumento.click()
+        #tipo instrumento
+        aguardar_e_clicar(browser, '//*[@id="cboTPRequerimento"]/option[5]')
         if _stop_flag: return
 
         print("Selecionando a Vigência")
-        vigencia = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="cboSTVigencia"]/option[3]')))
-        vigencia.click()
+        #vigencia
+        aguardar_e_clicar(browser, '//*[@id="cboSTVigencia"]/option[3]')
         if _stop_flag: return
 
         print("Selecionando a primeira UF")
-        uf_registro = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="cboUFRegistro"]')))
-        uf_registro.click()
-        uf_opcao_registro = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, f"//*[@id='cboUFRegistro']/option[@value='{uf}']")))
-        uf_opcao_registro.click()
+        #uf registro
+        aguardar_e_clicar(browser, '//*[@id="cboUFRegistro"]')
+        #uf opção registro
+        aguardar_e_clicar(browser, f"//*[@id='cboUFRegistro']/option[@value='{uf}']")
         if _stop_flag: return
 
         print("Selecionando a segunda UF")
-        abrangencia_territorial = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="cboUFAbrangenciaTerritorial"]')))
-        abrangencia_territorial.click()
-        abrangencia_opcao = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, f"//*[@id='cboUFAbrangenciaTerritorial']/option[@value='{uf}']")))
-        abrangencia_opcao.click()
+        #abrangencia territorial
+        aguardar_e_clicar(browser, '//*[@id="cboUFAbrangenciaTerritorial"]')
+        #abrangencia opção
+        aguardar_e_clicar(browser, f"//*[@id='cboUFAbrangenciaTerritorial']/option[@value='{uf}']")
         if _stop_flag: return
-
-        selecionar_municipio_button = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="btnSelecionarMunicipio"]')))
-        selecionar_municipio_button.click()
+        
+        #selecionar município
+        aguardar_e_clicar(browser, '//*[@id="btnSelecionarMunicipio"]')
         if _stop_flag: return
 
         time.sleep(1)
         print("Filtrando a primeira letra do município")
         if primeira_letra_municipio.upper() != "A":    
             letra_xpath = f'//div[@id="divMunicipiosAbrangenciaTerritorial"]//td[contains(text(), "{primeira_letra_municipio}")]'
-            letter_element_clickable = EC.element_to_be_clickable((By.XPATH, letra_xpath))
-            
-            try:
-                letter_element = WebDriverWait(browser, 10).until(letter_element_clickable)
-                letter_element.click()
-            except Exception as e:
-                print(f"Não foi possível clicar na letra '{primeira_letra_municipio}'. Tentando outro método ou ignorando. Erro: {e}")
+        
+            aguardar_e_clicar(browser, letra_xpath)
         else:
             print("Seleção já começa na letra A, pulando o clique....")
         if _stop_flag: return
 
-        municipios_carregados = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located(
-                (By.ID, "divMunicipiosSelecionados"))
+        WebDriverWait(browser, 10).until(
+            EC.presence_of_element_located((By.ID, "divMunicipiosSelecionados"))
         )
         if _stop_flag: return
 
@@ -442,68 +471,49 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             if not municipio_encontrado:
                 raise ValueError(f"Município '{municipio}' não encontrado na lista do site.")
 
-            fechar_btn = WebDriverWait(browser, 10).until(
-                EC.presence_of_element_located((By.XPATH, '/html/body/div[3]/div[3]/div/button/span')))
-            fechar_btn.click()
+            aguardar_e_clicar(browser, '/html/body/div[3]/div[3]/div/button/span')
             if _stop_flag: return
         except Exception as e:
             print("Ocorreu um erro ao selecionar o municipio")
-            log_erro(
-                arquivo_log, f"Ocorreu um erro ao selecionar o municipio, certifique-se que o nome do município esteja igual ao do site, CNPJ: {cnpj} erro retornado: {str(e)}")
+            log_erro(arquivo_log, f"Erro no município CNPJ: {cnpj}: {str(e)}")
             return
-
+    
         time.sleep(1)
-        if _stop_flag: return
-
-        browser.execute_script(
-            "window.scrollTo(0, document.body.scrollHeight);")
-        pesquisa_btn = WebDriverWait(browser, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="btnPesquisar"]')))
-        pesquisa_btn.click()
+        browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         print("Clicando no botão de pesquisa")
-        
-        time.sleep(1)
+        aguardar_e_clicar(browser, '//*[@id="btnPesquisar"]')
         if _stop_flag: return
 
         ultimo_caminho_pdf_processado = None
         pasta_municipio_final = None 
-
+        
         try:
-            print("Aguardando alerta de nenhum registro...")
-            alerta_nenhum_registro = WebDriverWait(browser, 5).until(
+            print("aguardandoalerta de nenhum registro detectado") #1
+            alerta = WebDriverWait(browser, 5).until(
                 EC.presence_of_element_located((By.XPATH, '/html/body/div[5]/div[2]/table/tbody/tr/td[2]')))
+            
             print("Alerta de nenhum registro detectado")
+            aguardar_e_clicar(browser, '/html/body/div[5]/div[3]/div/button/span')
+            
+            registrar_sem_doc(numloja, cnpj, municipio, codsind)
 
-            time.sleep(1)
-            if _stop_flag: return
-
-            ok_btn = WebDriverWait(browser, 10).until(
-                EC.element_to_be_clickable((By.XPATH, '/html/body/div[5]/div[3]/div/button/span')))
-            ok_btn.click()
-            if _stop_flag: return
+            aguardar_e_clicar(browser, '//*[@id="btnLimpar"]')
+            aguardar_e_clicar(browser, '/html/body/div[5]/div[3]/div/button[1]/span')
 
             print(f"Registrando loja sem documento: {numloja}")
             registrar_sem_doc(numloja, cnpj, municipio, codsind)
             if _stop_flag: return
-
-            limpar_btn = WebDriverWait(browser, 10).until(
-                EC.element_to_be_clickable((By.XPATH, '//*[@id="btnLimpar"]')))
-            limpar_btn.click()
-            if _stop_flag: return
-
-            sim_btn = WebDriverWait(browser, 10).until(
-                EC.element_to_be_clickable((By.XPATH, '/html/body/div[5]/div[3]/div/button[1]/span')))
-            sim_btn.click()
-            if _stop_flag: return
-
-            return 
-        except Exception as E: 
+            return
+        
+        except Exception: 
             print("Nenhum alerta detectado, seguindo normalmente para o download")
             browser.execute_script("window.scrollTo(0, 0);")
             if _stop_flag: return
-
+            
             original_window = browser.current_window_handle
-            original_windows = browser.window_handles
+        
+            print("Procurando todos os botões de download...")
+            botoes_download = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
 
             print("Procurando todos os botões de download...")
             botoes_download = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
@@ -517,100 +527,147 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
 
                 usar_pasta_municipio_na_chamada = len(botoes_download) > 1
 
-                for i, botao in enumerate(botoes_download):
+                
+                for i in range(len(botoes_download)):
                     if _stop_flag: return
-                    try:
-                        
+
+                    try:   
+                        botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
+                        if i >= len(botoes_atuais): break
+
+                        botao_foco = botoes_atuais[i]
                         pular_download = False
 
-                        try:
-                            print(f"Procurando o botão 'Visualizar' para o item {i+1}...")
-                            container_pai = botao.find_element(By.XPATH, './../..')
-                            
-                            botao_visualizar = container_pai.find_element(By.XPATH, ".//a[contains(normalize-space(.), 'Visualizar Instrumento Coletivo')]")
-                            
-                            janela_original = browser.current_window_handle
-                            janelas_antes_do_clique = set(browser.window_handles)
+                        print(f"Processando item {i+1} de {len(botoes_download)}...")
 
-                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_visualizar)
-                            time.sleep(0.5)
-                            botao_visualizar.click()
-                            print("Botão 'Visualizar' clicado com sucesso. Processando a nova aba...")
+                        container_pai = botao_foco.find_element(By.XPATH, './../..')
+                        botao_visualizar = container_pai.find_element(By.XPATH, ".//a[contains(normalize-space(.), 'Visualizar Instrumento Coletivo')]")
 
-                            WebDriverWait(browser, 10).until(EC.number_of_windows_to_be(len(janelas_antes_do_clique) + 1))
-                            
-                            handle_nova_aba = (set(browser.window_handles) - janelas_antes_do_clique).pop()
-                            browser.switch_to.window(handle_nova_aba)
+                        #
+                        janela_original = browser.current_window_handle
+                        janelas_antes = set(browser.window_handles)
+
+                        browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_visualizar)
+                        time.sleep(1)
+                        browser.execute_script("arguments[0].click();", botao_visualizar)
+
+                        WebDriverWait(browser, 15).until(EC.number_of_windows_to_be(len(janelas_antes) + 1))
+                        nova_aba = (set(browser.window_handles) - janelas_antes).pop()
+                        browser.switch_to.window(nova_aba)
+                        
+                        time.sleep(5)
+
+                        texto_pagina = browser.find_element(By.TAG_NAME, "body").text.lower()
 
                             # arrumar
-                            palavras_para_buscar = ["rodoviária", 
-                                                    "rodov", "peix", "peixarias",
-                                                      "rodoviaria", "açougues", "rodoviárias", 
-                                                      "rodoviarias", "ATACADISTA", "FARMACEUTICOS", 
-                                                      "OPTICO", "ATAC DE AL E BEB EM GERAL", "SUPERMERCADOS", 
-                                                      "HIPERMERCADOS", "COMERCIO DE BENS E DE SERVICOS",
-                                                        "ORGANIZACAO DAS COOPERATIVAS",
-                                                        "COMERCIO DE VEICULOS", "VAREJ. DE GEN. ALIM.",
+                        palavras_para_buscar = ["rodoviária", 
+                                                          "rodov", "peix", "peixarias",
+                                                          "rodoviarias", "ATACADISTA", "FARMACEUTICOS", 
+                                                          "OPTICO", "ATAC DE AL E BEB EM GERAL",
+                                                          "HIPERMERCADOS", "COMERCIO DE BENS E DE SERVICOS",
+                                                          "ORGANIZACAO DAS COOPERATIVAS",
+                                                          "COMERCIO DE VEICULOS",
                                                           "ESTABELECIMENTOS DE PRESTACAO DE SERVICOS FUNERARIOS",
-                                                          "GENEROS ALIMENTICIOS", "SINDICATO DOS LOJISTAS", "GENEROS ALIM",
-                                                            "MAT.CONSTR. LOUCAS, TINTAS, FERRAG.",
-                                                          "ATAC DE PRODUTOS QUIM", "OCERGS-SINDICATO E ORGANIZACAO"]
+                                                          "SINDICATO DOS LOJISTAS",
+                                                          "MAT.CONSTR. LOUCAS, TINTAS, FERRAG.",
+                                                          "ATAC DE PRODUTOS QUIM", "OCERGS-SINDICATO E ORGANIZACAO",
+                                                          "CONCESSIONARIOS", "DISTRIBUIDORES DE VEICULOS", "11.564.609/0001-00", "90.818.667/0001-99", "90.818.667/0001-99",
+                                                          "90.818.667/0001-99", "ORGANIZACAO DAS COOPERATIVAS DO ESTADO"]    # mudança 3
+                             
+                        # 11.564.609/0001-00 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DO VALE DO SINOS - SINDIGENEROS/VALE
+                        # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM. E DO C
+                        # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM. E DO C
+                        # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM. E DO C
+
+                        print("Buscando por palavras-chave na aba de visualização...")
                             
-                            #palavras_para_buscar = []
+                        time.sleep(8) # mudança 4
 
-                            print("Buscando por palavras-chave na aba de visualização...")
+                        texto_da_pagina = browser.find_element(By.TAG_NAME, "body").text
+                        texto_da_pagina_lower = texto_da_pagina.lower()
+
+                        for palavra in palavras_para_buscar:
+                            if palavra.lower() in texto_da_pagina_lower:
+
+                                print("          ")
+                                print(f"  AVISO: Palavra-chave '{palavra}' encontrada para a Loja {numloja}.")
+                                print("          ")
+                                pular_download = True
+                                break
+
+                        if not pular_download:
+
+                            botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
+                            botao_clique_real = botoes_atuais[i]
                             
-                            time.sleep(2)
-
-                            texto_da_pagina = browser.find_element(By.TAG_NAME, "body").text
-                            texto_da_pagina_lower = texto_da_pagina.lower()
-
-                            for palavra in palavras_para_buscar:
-                                if palavra.lower() in texto_da_pagina_lower:
-
-                                    print("          ")
-                                    print(f"  AVISO: Palavra-chave '{palavra}' encontrada para a Loja {numloja}.")
-                                    print("          ")
-                                    
-                                    pular_download = True
-
-                                    break 
-
-                            time.sleep(3) 
-                            browser.close()
-                            browser.switch_to.window(janela_original)
-                            print("Nenhuma palavra-chave foi encontrada.")
-                            print("Aba de visualização foi fechada. Retomando o processo de download.")
+                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
                             time.sleep(1)
+                            browser.execute_script("arguments[0].click();", botao_clique_real)
+                            print(f"Download disparado para item {i+1}")
+                            
+                            try:
+                                sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
+                                    codsind,
+                                    municipio,
+                                    cidade_sind,
+                                    f"{numloja}__{i+1}" if usar_pasta_municipio_na_chamada else numloja,
+                                    usar_pasta_municipio=usar_pasta_municipio_na_chamada
+                                )
 
-                        except Exception as e_visualizar:
-                            print(f"Não foi possível processar o botão 'Visualizar' para o item {i+1}. Prosseguindo para o download. Erro: {e_visualizar}")
+                                if sucesso and dias_de_atraso < 0:
+                                    print(f"Documento da Loja {numloja} está atrasado. Movendo para pasta específica...")
 
+                                    if usar_pasta_municipio_na_chamada and folder_path:
+                                        destino_atrasado = os.path.join(atrasados_dir, os.path.basename(folder_path))
+                                        if os.path.exists(destino_atrasado):
+                                            shutil.rmtree(destino_atrasado)
+                                        shutil.move(folder_path, atrasados_dir)
+                                        print(f"Pasta movida para: {atrasados_dir}")
+
+                                    elif pdf_path:
+                                        destino_atrasado = os.path.join(atrasados_dir, os.path.basename(pdf_path))
+
+                                        if os.path.exists(destino_atrasado):
+                                            os.remove(destino_atrasado)
+                                        shutil.move(pdf_path, atrasados_dir)
+                                        print(f"Arquivo movido para: {atrasados_dir}")
+                                    
+                            except Exception as e_proc:
+                                print(f"Erro ao processar arquivo baixado: {e_proc}")
+
+                            #-----------------------------------------------------
+  
+                            print(f"Clique de download disparado para o item {i+1}")
+
+                        browser.close() # Fecha a aba de visualização (que estava em foco)
+                        browser.switch_to.window(original_window) # Volta para a aba da lista
+                        time.sleep(1)
+                      
                         if pular_download:
-                            print("Download pulado devido a palavra-chave encontrada.")
-                            continue
+                                continue
 
-                        original_window = browser.current_window_handle
-                        original_windows_before_click = set(browser.window_handles)
+                        janelas_antes_download = set(browser.window_handles)
+                        botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
+                        botao_clique_real = botoes_atuais[i]
 
-                        browser.execute_script("arguments[0].scrollIntoView(true);", botao)
-                        time.sleep(1.2)
-                        botao.click()
-                        time.sleep(5) 
-                        if _stop_flag: return
+                        browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
+                        time.sleep(1.5)
+                        browser.execute_script("arguments[0].click();", botao_clique_real)
+
+                        print(f"Download disparado para item {i+1}")
+                       
 
                         try:
-                            WebDriverWait(browser, 5).until(
-                                lambda drv: len(drv.window_handles) > len(original_windows_before_click)
-                            )
-                            new_windows = set(browser.window_handles) - original_windows_before_click
-                            for new_window in new_windows:
-                                browser.switch_to.window(new_window)
-                                browser.close() 
-                            browser.switch_to.window(original_window) 
-                        except Exception as e_tab:
-                            print(f"Nenhuma nova aba de download detectada ou fechada rapidamente. Erro: {e_tab}")
+                            WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download))
+                            novas_janelas = set(browser.window_handles) - janelas_antes_download
+                            for aba in novas_janelas:
+                                browser.switch_to.window(aba)
+                                browser.close()
+                            browser.switch_to.window(janela_original)
+                        except:
+                            pass
 
+                        #
                         sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
                                             codsind, 
                                             municipio, 
@@ -623,9 +680,10 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             pasta_municipio_final = folder_path
                         else:
                             print("Não foi possível renomear ou converter um dos arquivos.")
+
                     except Exception as e:
                         log_erro(arquivo_log, f"Erro ao tentar baixar e processar arquivo {i+1} de {len(botoes_download)} para Loja {numloja}: {str(e)}")
-                
+
             time.sleep(2)
             if _stop_flag: return
 
@@ -673,9 +731,9 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             arquivo_log, f"Erro na função movimentacao_site: {str(e)}", cnpj)
         print(f"Erro na função movimentacao_site: {str(e)}")
         
-################################################################
+#############################################################################
 
-def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_callback=None): #parte principal do código
+def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_callback=None): #  parte principal do código
     global _stop_flag, _browser_driver
     global mediador_dir, historico_dir, download_dir, atrasados_dir
     global pasta_log, arquivo_log, diretorio_log, caminho_log_hist
@@ -724,8 +782,8 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
             loja_inicial_num = int(loja_inicial)
             print(f"Procurando por loja inicial a partir de: {loja_inicial_num}")
            
-            for row in df.itertuples(index=False):
-                numloja = row[0]
+            for row in df.itertuples(index=False):   # mudança 2 junto a troca de openpyxl para pandas
+                numloja = row[0]          
                 try:
                     if row[0] is not None:
                         todas_as_lojas.append(int(row[0]))
@@ -755,7 +813,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         chrome_options.add_argument("disable-infobars")
         chrome_options.add_argument("--ignore-certificate-errors")
         chrome_options.add_argument("--allow-running-insecure-content")
-      #  chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--headless=new")
         
         final_download_path = os.path.abspath(download_dir)
         print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
@@ -800,7 +858,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 
                 if numloja_atual == 'None': continue
                 
-                #indices sindicatos(edu)
+                # indices sindicatos(edu)
                 #cnpj = str(row[2])         
                 #uf = str(row[4])
                 #municipio = str(row[21])
@@ -808,7 +866,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 #codsind = str(row[1])
                 #numloja = str(row[0])
                 
-                #indices acompanhamentos
+                # indices acompanhamentos
                 cnpj = str(row[2])
                 uf = str(row[4])
                 municipio = str(row[5])
@@ -819,10 +877,10 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 dias_de_atraso = 0
                 if len(row) > 3 and row[3] is not None:
                     try:
-                        dias_de_atraso = float(row[3])
+                        dias_de_atraso = float(row[3])     
                     except (ValueError, TypeError):
                         dias_de_atraso = 0
-                primeira_letra_municipio = primeira_letra(municipio)
+                primeira_letra_municipio = primeira_letra(municipio) # mudança 1
 
                 if update_callback:
                     update_callback(f"{numloja} | CNPJ: {cnpj}")
@@ -831,7 +889,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 if not cnpj or cnpj == 'None':
                     print(f"CNPJ ausente ou inválido, pulando: CNPJ lido: {cnpj}")
                     continue
-                #chama o selenium para o site
+                # chama o selenium para o site
                 movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
 
             if not _stop_flag:

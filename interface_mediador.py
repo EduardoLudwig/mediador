@@ -4,7 +4,7 @@ import threading
 import sys
 import os
 import pythoncom
-from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path
+from robo_mediador_original import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path
 
 # adicionar o icone de giro para mostrar que esta rodando (isso já fiz no rodo dos ccts do comuniq, só copiar e colar)
 
@@ -187,7 +187,7 @@ class App:
             if self.caminho_download:
                 self.botao_iniciar.configure(state="normal")
         else:
-            self.status.configure(text="Arquivo deve ser em formato excel (.xlsx ou .xlsb).")
+            self.status.configure(text="Arquivo deve ser em formato excel (.xlsx ou .xlsb).") 
             self.botao_iniciar.configure(state="disabled")
 
     def iniciar_processamento(self):
