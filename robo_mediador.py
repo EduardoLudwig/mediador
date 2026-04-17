@@ -105,7 +105,7 @@ def remove_acentos(texto):
 def obter_caminho_arquivo_excel():
     print("Selecione o arquivo do Excel:")
     root = Tk()
-    root.withdraw()  # Esconder a janela principal do Tkinter
+    root.withdraw()
 
     last_path = load_last_excel_path()
 
@@ -128,12 +128,11 @@ def primeira_letra(palavra):
 
 ################################################################
 
-def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_pasta_municipio=False): # Remover dias_de_atraso e sufixo_arquivo
+def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_pasta_municipio=False, is_debug=False):
     if _stop_flag: return False
     max_tentativas = 3
     tentativa = 0
     
-    #mudança 5 - nova regex para extrair a parte da cidade sem números ou hífens, considerando possíveis variações de formatação
     if cidade_sind: 
         match = re.search(r"-\s*([^0-9-]+?)(?:\s*-|\s+\d|$)", cidade_sind)
         if match:
@@ -187,12 +186,14 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_past
             novo_nome_doc = f"{numloja_formatado}_{municipio_formatado}_{cidade_sind_limpa}_SIND{codsind_formatado}{sufixo_formatado}.doc"
 
 
+            diretorio_destino = filtrados_debug_dir if is_debug else download_dir
+
             if usar_pasta_municipio:
-                pasta_municipio_para_retorno = subpasta_municipio(numloja_para_pasta, municipio)
+                pasta_municipio_para_retorno = subpasta_municipio(numloja_para_pasta, municipio, diretorio_base=diretorio_destino)
                 novo_caminho = os.path.join(pasta_municipio_para_retorno, novo_nome_doc)
                 caminho_final_pdf = novo_caminho.replace(".doc", ".pdf") 
             else:
-                novo_caminho = os.path.join(download_dir, novo_nome_doc)
+                novo_caminho = os.path.join(diretorio_destino, novo_nome_doc)
                 caminho_final_pdf = novo_caminho.replace(".doc", ".pdf")
             
             try:
@@ -297,17 +298,20 @@ def registrar_sem_doc(numloja, cnpj, municipio, codsind):
 
 ################################################################
 
-def subpasta_municipio(numloja, municipio):
+def subpasta_municipio(numloja, municipio, diretorio_base=None):
+    if diretorio_base is None:
+        diretorio_base = download_dir
+        
     municipio_sem_acentos = remove_acentos(municipio).upper()
     numloja = str(numloja).zfill(3)
     nome_pasta = f"{numloja}_{municipio_sem_acentos}"
-    caminho_pasta = os.path.join(download_dir, nome_pasta)
+    caminho_pasta = os.path.join(diretorio_base, nome_pasta)
     os.makedirs(caminho_pasta, exist_ok=True)
     return caminho_pasta
 
 ################################################################
 
-def conversao_doc_para_pdf(caminho_doc): # Mudança 6 // talvez refazer
+def conversao_doc_para_pdf(caminho_doc):
     if _stop_flag: return False
     word = None
     doc = None
@@ -348,10 +352,7 @@ def conversao_doc_para_pdf(caminho_doc): # Mudança 6 // talvez refazer
             try: word.Quit()
             except: pass
         return False
-################################################################   # Função nova adicionada para aguardar elementos de forma mais robusta,
-                                                                   # evitando erros comuns de timing e carregamento do site.
-                                                                   # Substitui os trechos de código repetitivos de espera e clique/preenchimento 
-                                                                   # no def movimentacao_site, deixando o código mais limpo e fácil de manter.
+################################################################  
 
 def aguardar_e_clicar(browser, xpath, tempo=30): # Mudança 7 
     try:
@@ -483,14 +484,11 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
         print("Clicando no botão de pesquisa")
         aguardar_e_clicar(browser, '//*[@id="btnPesquisar"]')
         if _stop_flag: return
-
-        ultimo_caminho_pdf_processado = None
-        pasta_municipio_final = None 
         
         try:
-            print("aguardandoalerta de nenhum registro detectado") #1
-            alerta = WebDriverWait(browser, 5).until(
-                EC.presence_of_element_located((By.XPATH, '/html/body/div[5]/div[2]/table/tbody/tr/td[2]')))
+            print("aguardando alerta de nenhum registro detectado")
+            
+            WebDriverWait(browser, 5).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[5]/div[2]/table/tbody/tr/td[2]')))
             
             print("Alerta de nenhum registro detectado")
             aguardar_e_clicar(browser, '/html/body/div[5]/div[3]/div/button/span')
@@ -512,219 +510,380 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             
             original_window = browser.current_window_handle
         
-            print("Procurando todos os botões de download...")
-            botoes_download = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
-
-            print("Procurando todos os botões de download...")
-            botoes_download = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
+            print("Procurando todos os botões de download na tela...")
+            botoes_download_iniciais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
             if _stop_flag: return
 
-            if not botoes_download:
-                print("Nenhum botão de download encontrado após a pesquisa. Isso é inesperado.")
+            if not botoes_download_iniciais:
+                print("Nenhum botão de download encontrado após a pesquisa.")
                 registrar_sem_doc(numloja, cnpj, municipio, codsind)
             else:
-                print(f"{len(botoes_download)} botões de download encontrados")
+                total_botoes = len(botoes_download_iniciais)
+                print(f"{total_botoes} botões de download encontrados. Iniciando varredura...")
 
-                usar_pasta_municipio_na_chamada = len(botoes_download) > 1
-
+                # =========================================================================
+                # SISTEMA DE DOIS PASSOS
+                # =========================================================================
+                # PASSO 1: FASE DE MAPEAMENTO COM EVASÃO DE FIREWALL (WAF)
+                # O robô vai entrar em TODAS as abas de visualizar e apenas anotar os índices (posições) dos botões que não contém palavras proibidas. 
+                # NENHUM download é feito nesta fase.
+                # =========================================================================
                 
-                for i in range(len(botoes_download)):
+                indices_aprovados = [] # Lista que guardará os botões que passaram no filtro
+                documentos_reprovados = [] # Guardará os reprovados no formato {'indice': i, 'motivo': palavra}
+                
+                for i in range(total_botoes):
                     if _stop_flag: return
-
-                    try:   
-                        botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
-                        if i >= len(botoes_atuais): break
-
-                        botao_foco = botoes_atuais[i]
-                        pular_download = False
-
-                        print(f"Processando item {i+1} de {len(botoes_download)}...")
-
-                        container_pai = botao_foco.find_element(By.XPATH, './../..')
-                        botao_visualizar = container_pai.find_element(By.XPATH, ".//a[contains(normalize-space(.), 'Visualizar Instrumento Coletivo')]")
-
-                        #
-                        janela_original = browser.current_window_handle
-                        janelas_antes = set(browser.window_handles)
-
-                        browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_visualizar)
-                        time.sleep(1)
-                        browser.execute_script("arguments[0].click();", botao_visualizar)
-
-                        WebDriverWait(browser, 15).until(EC.number_of_windows_to_be(len(janelas_antes) + 1))
-                        nova_aba = (set(browser.window_handles) - janelas_antes).pop()
-                        browser.switch_to.window(nova_aba)
-                        
-                        time.sleep(5)
-
-                        texto_pagina = browser.find_element(By.TAG_NAME, "body").text.lower()
-
-                            # arrumar
-                        palavras_para_buscar = ["rodoviária", 
-                                                          "rodov", "peix", "peixarias",
-                                                          "rodoviarias", "ATACADISTA", "FARMACEUTICOS", 
-                                                          "OPTICO", "ATAC DE AL E BEB EM GERAL",
-                                                          "HIPERMERCADOS", "COMERCIO DE BENS E DE SERVICOS",
-                                                          "ORGANIZACAO DAS COOPERATIVAS",
-                                                          "COMERCIO DE VEICULOS",
-                                                          "ESTABELECIMENTOS DE PRESTACAO DE SERVICOS FUNERARIOS",
-                                                          "SINDICATO DOS LOJISTAS",
-                                                          "MAT.CONSTR. LOUCAS, TINTAS, FERRAG.",
-                                                          "ATAC DE PRODUTOS QUIM", "OCERGS-SINDICATO E ORGANIZACAO",
-                                                          "CONCESSIONARIOS", "DISTRIBUIDORES DE VEICULOS", "11.564.609/0001-00", "90.818.667/0001-99", "90.818.667/0001-99",
-                                                          "90.818.667/0001-99", "ORGANIZACAO DAS COOPERATIVAS DO ESTADO"]    # mudança 3
-                             
-                        # 11.564.609/0001-00 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DO VALE DO SINOS - SINDIGENEROS/VALE
-                        # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM. E DO C
-                        # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM. E DO C
-                        # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM. E DO C
-
-                        print("Buscando por palavras-chave na aba de visualização...")
-                            
-                        time.sleep(8) # mudança 4
-
-                        texto_da_pagina = browser.find_element(By.TAG_NAME, "body").text
-                        texto_da_pagina_lower = texto_da_pagina.lower()
-
-                        for palavra in palavras_para_buscar:
-                            if palavra.lower() in texto_da_pagina_lower:
-
-                                print("          ")
-                                print(f"  AVISO: Palavra-chave '{palavra}' encontrada para a Loja {numloja}.")
-                                print("          ")
-                                pular_download = True
-                                break
-
-                        if not pular_download:
-
+                    
+                    sucesso_leitura = False
+                    tentativas_waf = 0
+                    
+                    # Loop de retentativa para o MESMO documento caso o Firewall bloqueie
+                    while not sucesso_leitura and tentativas_waf < 3:
+                        if _stop_flag: return
+                        try:   
                             botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
-                            botao_clique_real = botoes_atuais[i]
-                            
-                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
+                            if i >= len(botoes_atuais): break
+
+                            botao_foco = botoes_atuais[i]
+                            pular_este_arquivo = False
+                            motivo_reprovacao = "Desconhecido" 
+                            bateu_no_waf = False
+
+                            if tentativas_waf == 0:
+                                print(f"Mapeando documento {i+1} de {total_botoes}...")
+                            else:
+                                print(f"Retentando documento {i+1} (Tentativa WAF {tentativas_waf + 1}/3)...")
+
+                            # Clica para abrir a aba de "Visualizar"
+                            container_pai = botao_foco.find_element(By.XPATH, './../..')
+                            botao_visualizar = container_pai.find_element(By.XPATH, ".//a[contains(normalize-space(.), 'Visualizar Instrumento Coletivo')]")
+
+                            janelas_antes = set(browser.window_handles)
+                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_visualizar)
                             time.sleep(1)
-                            browser.execute_script("arguments[0].click();", botao_clique_real)
-                            print(f"Download disparado para item {i+1}")
+                            browser.execute_script("arguments[0].click();", botao_visualizar)
+
+                            # Vai para a nova aba de texto
+                            WebDriverWait(browser, 15).until(EC.number_of_windows_to_be(len(janelas_antes) + 1))
+                            nova_aba = (set(browser.window_handles) - janelas_antes).pop()
+                            browser.switch_to.window(nova_aba)
                             
+                            # =========================================================================
+                            # ESPERA INTELIGENTE DE LEITURA v4.0 + DETECÇÃO DE FIREWALL
+                            # =========================================================================
+                            texto_da_pagina_lower = ""
+                            tempo_limite = 30 
+                            tamanho_anterior = 0
+                            contador_estabilidade = 0
+                            
+                            for _ in range(tempo_limite):
+                                if _stop_flag: break
+                                try:
+                                    texto_cru = browser.find_element(By.TAG_NAME, "body").text
+                                    texto_cru_lower = texto_cru.lower()
+                                    
+                                    # DETECÇÃO DO FIREWALL (WAF)
+                                    # WAF = Web Application Firewall (forma do site web se "proteger" contra bots, no caso do mediador ele mostra a preview do documento com apenas o texto "requested url was rejected..." ao invés da CCT de verdade )
+                                    if "requested url was rejected" in texto_cru_lower or "your support id is" in texto_cru_lower:
+                                        bateu_no_waf = True
+                                        break # Sai do loop de espera imediatamente
+                                    
+                                    texto_cru_limpo = remove_acentos(texto_cru_lower)
+                                    texto_temp = re.sub(r'\s+', ' ', texto_cru_limpo)
+                                    
+                                    # checa o tamanho do texto presente no documento, se for mt curto (< 100 caracteres) provavelmente a preview ainda está carregando
+                                    tamanho_atual = len(texto_temp.strip())
+                                    
+                                    # Ignora se for menor que 100 caracteres (página carregando)
+                                    if tamanho_atual < 100 or "ocorreu um erro" in texto_temp or "service unavailable" in texto_temp:
+                                        time.sleep(1)
+                                        continue
+                                    
+                                    # Lógica de Estabilidade
+                                    if tamanho_atual == tamanho_anterior:
+                                        contador_estabilidade += 1
+                                    else:
+                                        contador_estabilidade = 0 
+                                        tamanho_anterior = tamanho_atual
+                                    
+                                    if contador_estabilidade >= 2:
+                                        texto_da_pagina_lower = texto_temp
+                                        break # Sai do loop com o texto 100% completo!
+                                        
+                                except:
+                                    pass 
+                                    
+                                time.sleep(1) 
+                                
+                            # =========================================================================
+                            # TRATAMENTO PÓS-ESPERA (Decide o que fazer se bateu no WAF)
+                            # =========================================================================
+                            
+                            if bateu_no_waf:
+                                tempo_espera = 30 * (tentativas_waf + 1)
+                                print(f"[WAF] Firewall do governo detectado! Resfriando IP por {tempo_espera} segundos...")
+                                browser.close() 
+                                browser.switch_to.window(original_window) 
+                                time.sleep(tempo_espera) 
+                                tentativas_waf += 1
+                                continue # O 'continue' joga o código pro início do 'while', retentando o mesmo arquivo! (espera um tempo e tenta baixar o MESMO arquivo novamente)
+                                
+                            # Se chegou até aqui sem bater no WAF, marca sucesso para sair do 'while'
+                            sucesso_leitura = True
+                            
+                            # Trava de segurança: Se deu timeout normal (sem texto e sem WAF)
+                            if len(texto_da_pagina_lower.strip()) < 100:
+                                print("AVISO: Documento não carregou ou site deu erro. Reprovado por segurança.")
+                                pular_este_arquivo = True
+                                motivo_reprovacao = "Falha no carregamento da página (Timeout ou Vazia)"
+
+                            palavras_filtro = [
+                                "rodoviária", "rodov", "peix", "peixarias", "rodoviarias", 
+                                
+                                "ATACADISTA", "FARMACEUTICOS", 
+                                "OPTICO", "ATAC DE AL E BEB EM GERAL",
+                                "HIPERMERCADOS", "COMERCIO DE BENS E DE SERVICOS",
+                                "ORGANIZACAO DAS COOPERATIVAS",
+                                "COMERCIO DE VEICULOS",
+                                "ESTABELECIMENTOS DE PRESTACAO DE SERVICOS FUNERARIOS",
+                                "SINDICATO DOS LOJISTAS",
+                                "MAT.CONSTR. LOUCAS, TINTAS, FERRAG.",
+                                "ATAC DE PRODUTOS QUIM", "OCERGS-SINDICATO E ORGANIZACAO",
+                                "CONCESSIONARIOS", "DISTRIBUIDORES DE VEICULOS", 
+                                "ORGANIZACAO DAS COOPERATIVAS DO ESTADO", "SINDICATO EMPREGADOS AGENTES AUTONOMOS",
+                                "SIND TRAB COM MINERIOS DERIV PETROLEO", "SINDICATO DAS EMPRESAS DE GARAGENS",
+                                "MINERIOS", "EMPRESAS DE GARAGENS", 
+
+                                "11.564.609/0001-00", "90.818.667/0001-99", "90.093.345/0001-20", "00.388.455/0001-26",
+                                "10.401.977/0001-74", "90.818.667/0001-99", "01.221.950/0001-09", "91.109.975/0001-08",
+                                "90.813.726/0001-36", "92.963.693/0001-36", "92.963.297/0001-09", "92.963.651/0001-03",
+                                "03.665.508/0001-05", "92.963.677/0001-43", "54.207.766/0001-70", "92.961.093/0001-39",
+                                "93.074.383/0001-23", "97.056.840/0001-08", "91.167.858/0001-09", "84.307.917/0001-23", 
+                                "83.876.839/0001-15", "59.842.294/0001-41", "76.683.028/0001-32", "15.106.815/0001-27",
+                                "79.370.367/0001-57", "80.869.894/0001-90", "78.687.431/0001-65", "78.686.888/0001-55",
+                                "77.841.682/0001-90", "04.243.203/0001-60", "79.371.423/0001-78", "82.662.735/0001-45",
+                                "10.695.042/0001-48"
+                            ]
+                             
+                            # 11.564.609/0001-00 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DO VALE DO SINOS - SINDIGENEROS/VALE
+                            # 90.818.667/0001-99 - SINDICATO INTERMUNICIPAL DO COM. VAREJ. DE GEN. ALIM.
+                            # 01.221.950/0001-09 - FEDERACAO NACIONAL DOS CONCESS E DISTRS DE VEICULOS
+                            # 90.093.345/0001-20 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS
+                            # 10.401.977/0001-74 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DE CACHOEIRA DO SUL
+                            # 90.813.726/0001-36 - SINDICATO DO COM ATAC DE AL E BEB EM GERAL NO EST RS
+                            # 92.963.693/0001-36 - SIND COM ATAC DE PRODUTOS QUIM P IND LAV E DROG MED P A
+                            # 92.963.297/0001-09 - SIND COM ATAC DE GENEROS ALIMENTICIOS DE PORTO ALEGRE
+                            # 92.963.651/0001-03 - SIND. INTERM. COM. ATAC. MAT.CONSTR. LOUCAS, TINTAS, FERRAG.
+                            # 03.665.508/0001-05 - SINDICATO DO COMERCIO ATACADISTA DO ESTADO DO RIO GRANDE DO
+                            # 92.963.677/0001-43 - SIND COM ATAC DE TECIDOS VESTUARIO E ARMARINHO DE PA
+                            # 54.207.766/0001-70 - SINDICATO NACIONAL DO COMERCIO TRANSPORTADOR-REVENDEDOR-RETAL DE COMBUSTIVEIS
+                            # 92.961.093/0001-39 - SIND TRAB COM MINERIOS DERIV PETROLEO NO EST RGS
+                            # 93.074.383/0001-23 - SINDICATO EMPREGADOS AGENTES AUTONOMOS COMERC ESTADO RS 
+                            # 97.056.840/0001-08 - SINDICATO DAS EMPRESAS DE GARAGENS, ESTACIONAMENTO E DE LIMPEZA E CONSERVACAO DE VEICULOS NO ESTADO DO RIO GRANDE DO SUL
+                            # 91.167.858/0001-09 - SINDICATO DOS REPRESENTANTES COMERCIAIS DE LAJEADO
+                            # 00.388.455/0001-26 - SIND DO COMERCIO VAREJ DE GENEROS ALIM DE FARROUPILHA
+                            # 91.109.975/0001-08 - SIND. DO COM. VAREJISTA DE GENEROS ALIM. DE CX. DO SUL 
+                            # 84.307.917/0001-23 - SIND DOS TRAB COM MIN E DERIV DE PETROLEO NO EST S CAT
+                            # 83.876.839/0001-15 - FEDERACAO DO COMERCIO DE BENS, SERVICOS E TURISMO DO ESTADO DE SANTA CATARINA
+                            # 59.842.294/0001-41 - SIND NACIONAL EMPR DISTRIBUIDORAS PRODUTOS SIDERURGICOS
+                            # 76.683.028/0001-32 - SINDICATO INTERMUNICIPAL DO COMERCIO VAREJISTA DE MATERIAIS
+                            # 15.106.815/0001-27 - SINDICATO DAS EMPRESAS CEREALISTAS DO ESTADO DO PARANA
+                            # 79.370.367/0001-57 - SIND DO COM VAREJ DE PROD FARMACEUT, DE USO HUMANO E ANIMAL
+                            # 80.869.894/0001-90 - SIND DOS MOTORISTAS, CONDUT. DE VEIC. RODOV URBANOS E EM GERAL, TRAB.TRANSP. ROD. PBCO
+                            # 78.687.431/0001-65 - SINDICATO DOS MOTORISTAS, CONDUTORES DE VEICULOS RODOVIARIOS URBANOS E EM GERAL, TRABALHADORES EM TRANSPORTES RODOVIARIOS DE DOIS VIZINHOS - SINTRODOV
+                            # 78.686.888/0001-55 - SIND DOS TRAB EM TRANSP RODOVIARIOS DE FRANC BELTRAO
+                            # 77.841.682/0001-90 - SINDICATO DOS TRAB EM TRANSP RODOVIARIOS DE CASCAVEL PR
+                            # 04.243.203/0001-60 - SINDICATO DOS CONCESSIONARIOS E DISTRIBUIDORES DE VEICULOS NO ESTADO DO RIO GRANDE DO SUL - SINCODIV/RS
+                            # 79.371.423/0001-78 - SINDICATO DAS EMPRESAS DE SERVICOS CONTABEIS E DAS EMPRESAS DE ASSESSORAMENTO, PERICIAS, INFORMACOES E PESQUISAS DE BLUMENAU E REGIAO
+                            # 82.662.735/0001-45 - SIND DO COM VAR DE PROD FARMAC DO VALE DO ITAJAI
+                            # 10.695.042/0001-48 - SINDICATO DAS EMPRESAS DE SISTEMAS ELETRONICOS DE SEGURANCA DO ESTADO DE SANTA CATARINA - SIESE-SC
+
+                            for palavra in palavras_filtro:
+                                palavra_limpa_filtro = remove_acentos(palavra.lower())
+                                if palavra_limpa_filtro in texto_da_pagina_lower:
+                                    print(f"Documento REPROVADO no filtro. Palavra '{palavra}' encontrada.")
+                                    pular_este_arquivo = True
+                                    motivo_reprovacao = f"Palavra '{palavra}'"
+                                    break
+
+                            # Se passou no filtro vai para a lista de APROVADOS, senão vai para a de REPROVADOS
+                            if not pular_este_arquivo:
+                                print(f"Documento APROVADO! Adicionado à fila de download principal.")
+                                indices_aprovados.append(i) 
+                            else:
+                                documentos_reprovados.append({'indice': i, 'motivo': motivo_reprovacao})
+
+                            # Fecha a aba de leitura e volta para a principal
+                            browser.close() 
+                            browser.switch_to.window(original_window) 
+                            time.sleep(1)
+
+                        except Exception as e_map:
+                            print(f"Erro ao mapear o arquivo {i+1}: {e_map}")
+                            browser.switch_to.window(original_window) 
+                            break # Sai do while em caso de erro crítico que não seja o WAF
+
+                # =========================================================================
+                # PASSO 2: FASE DE DECISÃO ESTRUTURAL
+                # Agora o robô sabe exatamente quantos e quais arquivos ele VAI baixar.
+                # =========================================================================
+                qtd_aprovados = len(indices_aprovados)
+                
+                if qtd_aprovados == 0:
+                    print("Nenhum documento da lista passou no filtro de palavras.")
+                    registrar_sem_doc(numloja, cnpj, municipio, codsind)
+                    
+                else:
+                    print(f"Mapeamento concluído. {qtd_aprovados} documento(s) serão baixados.")
+                    
+                    # Só criamos pasta para loja se tivermos MAIS de um arquivo REALMENTE aprovado
+                    usar_pasta_municipio_na_chamada = qtd_aprovados > 1
+
+                    # =========================================================================
+                    # PASSO 3: FASE DE EXECUÇÃO (DOWNLOAD E NOMEAÇÃO LIMPA)
+                    # =========================================================================
+                    # Vamos percorrer apenas os índices anotados. 
+                    # Usamos 'contador_baixados' para numerar os arquivos sequencialmente (1, 2, 3...) independentemente da posição que eles ocupavam no site.
+                    for contador_baixados, index_real in enumerate(indices_aprovados, start=1):
+                        if _stop_flag: return
+                        
+                        try:
+                            janelas_antes_download = set(browser.window_handles)
+                            botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
+                            
+                            if index_real >= len(botoes_atuais): break
+                                
+                            botao_clique_real = botoes_atuais[index_real]
+
+                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
+                            time.sleep(1.5)
+                            browser.execute_script("arguments[0].click();", botao_clique_real)
+
+                            print(f"Baixando documento ({contador_baixados}/{qtd_aprovados}) ...")
+                            time.sleep(5) # Respiro do servidor para gerar o arquivo
+                           
+                            # Limpeza de janelas extras de download
                             try:
-                                sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
-                                    codsind,
-                                    municipio,
-                                    cidade_sind,
-                                    f"{numloja}__{i+1}" if usar_pasta_municipio_na_chamada else numloja,
-                                    usar_pasta_municipio=usar_pasta_municipio_na_chamada
-                                )
+                                WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download))
+                                novas_janelas = set(browser.window_handles) - janelas_antes_download
+                                for aba in novas_janelas:
+                                    browser.switch_to.window(aba)
+                                    browser.close()
+                                browser.switch_to.window(original_window)
+                            except:
+                                pass
 
-                                if sucesso and dias_de_atraso < 0:
-                                    print(f"Documento da Loja {numloja} está atrasado. Movendo para pasta específica...")
-
+                            # Renomeia usando o nosso contador lógico sequencial
+                            sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
+                                codsind, 
+                                municipio, 
+                                cidade_sind, 
+                                f"{numloja}__{contador_baixados}" if usar_pasta_municipio_na_chamada else numloja, 
+                                usar_pasta_municipio=usar_pasta_municipio_na_chamada
+                            )
+                            
+                            if sucesso:
+                                
+                                # Move para pasta de atrasados se necessário
+                                if dias_de_atraso < 0:
+                                    print(f"Documento está atrasado ({abs(dias_de_atraso)} dias). Movendo para ATRASADOS...")
+                                    
                                     if usar_pasta_municipio_na_chamada and folder_path:
-                                        destino_atrasado = os.path.join(atrasados_dir, os.path.basename(folder_path))
-                                        if os.path.exists(destino_atrasado):
-                                            shutil.rmtree(destino_atrasado)
-                                        shutil.move(folder_path, atrasados_dir)
-                                        print(f"Pasta movida para: {atrasados_dir}")
+                                        # Cria a pasta de destino se não existir
+                                        destino_atrasado_pasta = os.path.join(atrasados_dir, os.path.basename(folder_path))
+                                        os.makedirs(destino_atrasado_pasta, exist_ok=True)
+                                        
+                                        # Move apenas o ARQUIVO PDF para dentro dela (mesclando as pastas)
+                                        if pdf_path and os.path.exists(pdf_path):
+                                            destino_pdf = os.path.join(destino_atrasado_pasta, os.path.basename(pdf_path))
+                                            if os.path.exists(destino_pdf):
+                                                os.remove(destino_pdf)
+                                            shutil.move(pdf_path, destino_pdf)
+                                            
+                                        # Limpa a pasta vazia que sobrou na raiz do Downloads
+                                        try:
+                                            os.rmdir(folder_path)
+                                        except:
+                                            pass
 
                                     elif pdf_path:
+                                        # Movimentação normal para arquivos soltos (sem pasta)
                                         destino_atrasado = os.path.join(atrasados_dir, os.path.basename(pdf_path))
-
                                         if os.path.exists(destino_atrasado):
                                             os.remove(destino_atrasado)
                                         shutil.move(pdf_path, atrasados_dir)
-                                        print(f"Arquivo movido para: {atrasados_dir}")
+
+                        except Exception as e_down:
+                            log_erro(arquivo_log, f"Erro ao executar o download do arquivo aprovado {contador_baixados}: {str(e_down)}")
+
+                # =========================================================================
+                # PASSO 4: FASE DE AUDITORIA (DEBUG MODE PARA BAIXAR ARQUIVOS FILTRADOS)
+                # =========================================================================
+                if MODO_DEBUG_FILTRO and documentos_reprovados:
+                    print(f"\n[MODO DEBUG] Iniciando download de {len(documentos_reprovados)} documento(s) REPROVADOS para auditoria...")
+                    
+                    # Define se cria subpasta dentro do FILTRADOS_DEBUG
+                    usar_pasta_debug = len(documentos_reprovados) > 1
+
+                    for contador_debug, doc_reprovado in enumerate(documentos_reprovados, start=1):
+                        if _stop_flag: return
+                        index_real = doc_reprovado['indice']
+                        motivo = doc_reprovado['motivo']
+                        
+                        try:
+                            janelas_antes_download = set(browser.window_handles)
+                            botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
+                            
+                            if index_real >= len(botoes_atuais): break
+                                
+                            botao_clique_real = botoes_atuais[index_real]
+                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
+                            time.sleep(1.5)
+                            browser.execute_script("arguments[0].click();", botao_clique_real)
+
+                            print(f"Baixando documento REPROVADO ({contador_debug}/{len(documentos_reprovados)}) ...")
+                            time.sleep(5) # Respiro do servidor
+                           
+                            # Limpeza de janelas extras de download
+                            try:
+                                WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download))
+                                novas_janelas = set(browser.window_handles) - janelas_antes_download
+                                for aba in novas_janelas:
+                                    browser.switch_to.window(aba)
+                                    browser.close()
+                                browser.switch_to.window(original_window)
+                            except:
+                                pass
+
+                            # Renomeia, Converte e ROTEIA direto para a pasta DEBUG!
+                            sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
+                                codsind, municipio, cidade_sind, 
+                                f"{numloja}___filtrado_{contador_debug}" if usar_pasta_debug else f"{numloja}__filtrado", 
+                                usar_pasta_municipio=usar_pasta_debug,
+                                is_debug=True # gatilho que define se deve passar para pasta de debug
+                            )
+                            
+                            if sucesso:
+                                nome_arquivo_salvo = os.path.basename(pdf_path) if pdf_path else "Desconhecido"
+
+                                # GRAVA O RELATÓRIO DO MOTIVO DE FILTRO DE CADA ARQUIVO
+                                linha_log = f"[{datetime.now().strftime('%d/%m/%Y %H:%M')}] Loja: {numloja.zfill(3)} | Sindicato: {codsind.zfill(4)} | Arquivo Salvo: {nome_arquivo_salvo} | Motivo: {motivo}\n"
+                                with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
+                                    f.write(linha_log)
                                     
-                            except Exception as e_proc:
-                                print(f"Erro ao processar arquivo baixado: {e_proc}")
+                            else:
+                                print("Não foi possível processar o arquivo reprovado.")
 
-                            #-----------------------------------------------------
-  
-                            print(f"Clique de download disparado para o item {i+1}")
-
-                        browser.close() # Fecha a aba de visualização (que estava em foco)
-                        browser.switch_to.window(original_window) # Volta para a aba da lista
-                        time.sleep(1)
-                      
-                        if pular_download:
-                                continue
-
-                        janelas_antes_download = set(browser.window_handles)
-                        botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
-                        botao_clique_real = botoes_atuais[i]
-
-                        browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
-                        time.sleep(1.5)
-                        browser.execute_script("arguments[0].click();", botao_clique_real)
-
-                        print(f"Download disparado para item {i+1}")
-                       
-
-                        try:
-                            WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download))
-                            novas_janelas = set(browser.window_handles) - janelas_antes_download
-                            for aba in novas_janelas:
-                                browser.switch_to.window(aba)
-                                browser.close()
-                            browser.switch_to.window(janela_original)
-                        except:
-                            pass
-
-                        #
-                        sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
-                                            codsind, 
-                                            municipio, 
-                                            cidade_sind, 
-                                            f"{numloja}__{i+1}" if usar_pasta_municipio_na_chamada else numloja, 
-                                            usar_pasta_municipio=usar_pasta_municipio_na_chamada
-                                        )
-                        if sucesso:
-                            ultimo_caminho_pdf_processado = pdf_path
-                            pasta_municipio_final = folder_path
-                        else:
-                            print("Não foi possível renomear ou converter um dos arquivos.")
-
-                    except Exception as e:
-                        log_erro(arquivo_log, f"Erro ao tentar baixar e processar arquivo {i+1} de {len(botoes_download)} para Loja {numloja}: {str(e)}")
-
-            time.sleep(2)
-            if _stop_flag: return
-
-            if isinstance(dias_de_atraso, (int, float)) and dias_de_atraso < 0:
-                print(f"Loja {numloja} está atrasada. Movendo todos os documentos para a pasta ATRASADOS.")
-                
-                if usar_pasta_municipio_na_chamada and pasta_municipio_final:
-                    caminho_destino_atrasados_pasta = os.path.join(atrasados_dir, os.path.basename(pasta_municipio_final))
-                    
-                    if os.path.exists(caminho_destino_atrasados_pasta):
-                        try:
-                            shutil.rmtree(caminho_destino_atrasados_pasta) 
-                            print(f"Pasta '{os.path.basename(pasta_municipio_final)}' existente em ATRASADOS removida para atualização.")
-                        except Exception as e:
-                            log_erro(arquivo_log, f"Erro ao remover pasta existente em ATRASADOS '{os.path.basename(pasta_municipio_final)}': {str(e)}")
-                            return 
-                                    
-                    shutil.move(pasta_municipio_final, atrasados_dir) 
-                    print(f"Pasta '{os.path.basename(pasta_municipio_final)}' movida para ATRASADOS.")
-                elif ultimo_caminho_pdf_processado: 
-                    caminho_destino_atrasados_pdf = os.path.join(atrasados_dir, os.path.basename(ultimo_caminho_pdf_processado))
-                    
-                    if os.path.exists(caminho_destino_atrasados_pdf):
-                        try:
-                            os.remove(caminho_destino_atrasados_pdf)
-                            print(f"Arquivo '{os.path.basename(ultimo_caminho_pdf_processado)}' existente em ATRASADOS removido para atualização.")
-                        except Exception as e:
-                            log_erro(arquivo_log, f"Erro ao remover arquivo PDF existente em ATRASADOS '{os.path.basename(ultimo_caminho_pdf_processado)}': {str(e)}")
-                            return
-                    
-                    shutil.move(ultimo_caminho_pdf_processado, atrasados_dir)
-                    print(f"Arquivo '{os.path.basename(ultimo_caminho_pdf_processado)}' movido para ATRASADOS.")
-                else:
-                    print(f"Loja {numloja} está atrasada, mas nenhum documento foi processado para mover.")
+                        except Exception as e_debug:
+                            log_erro(arquivo_log, f"Erro ao executar o download do arquivo de auditoria {contador_debug}: {str(e_debug)}")
+                        
+                    with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
+                        f.write("\n")
+                # =========================================================================
 
             browser.get('http://www3.mte.gov.br/sistemas/mediador/ConsultarInstColetivo')
             if _stop_flag: return
-        except Exception as e:
-            log_erro(
-                arquivo_log, f"Erro ao baixar o documento para CNPJ: {cnpj}: {str(e)}")
-            print(f"Erro ao baixar o documento: {str(e)}")
 
     except Exception as e:
         log_erro(
@@ -738,6 +897,11 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
     global mediador_dir, historico_dir, download_dir, atrasados_dir
     global pasta_log, arquivo_log, diretorio_log, caminho_log_hist
 
+    # MODO DEBUG DOS FILTROS (baixa o que foi filtrado para auditoria)
+    global MODO_DEBUG_FILTRO, filtrados_debug_dir, caminho_relatorio_filtros
+    # para testar o modo debug essa variável precisa receber 'True'
+    MODO_DEBUG_FILTRO = True # Mude para False quando for criar o executável de produção
+
     _stop_flag = False
     _browser_driver = None
 
@@ -747,6 +911,11 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         historico_dir = os.path.join(mediador_dir, "Histórico")
         download_dir = os.path.join(mediador_dir, "Downloads")
         atrasados_dir = os.path.join(download_dir, "ATRASADOS")
+        
+        # Criação do diretório de DEBUG
+        filtrados_debug_dir = os.path.join(download_dir, "FILTRADOS_DEBUG")
+        caminho_relatorio_filtros = os.path.join(filtrados_debug_dir, "Relatorio_Filtros_Reprovados.txt")
+        
         pasta_log = os.path.join(mediador_dir, "Logs")
         arquivo_log = os.path.join(pasta_log, "Log Erros.txt")
         diretorio_log = os.path.dirname(arquivo_log)
@@ -756,6 +925,12 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         os.makedirs(download_dir, exist_ok=True)
         os.makedirs(atrasados_dir, exist_ok=True)
         os.makedirs(historico_dir, exist_ok=True)
+        os.makedirs(filtrados_debug_dir, exist_ok=True) # Garante que a pasta de filtrados existe
+
+        # Se o modo debug estiver ativo, coloca o cabeçalho temporal no relatório
+        if MODO_DEBUG_FILTRO:
+            with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
+                f.write(f"\n=== NOVA EXECUÇÃO DE DEBUG: {datetime.now().strftime('%d/%m/%Y às %H:%M')} ===\n")
 
     try:
         if not caminho_excel:
@@ -782,7 +957,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
             loja_inicial_num = int(loja_inicial)
             print(f"Procurando por loja inicial a partir de: {loja_inicial_num}")
            
-            for row in df.itertuples(index=False):   # mudança 2 junto a troca de openpyxl para pandas
+            for row in df.itertuples(index=False):
                 numloja = row[0]          
                 try:
                     if row[0] is not None:
@@ -858,15 +1033,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 
                 if numloja_atual == 'None': continue
                 
-                # indices sindicatos(edu)
-                #cnpj = str(row[2])         
-                #uf = str(row[4])
-                #municipio = str(row[21])
-                #cidade_sind = str(row[20])
-                #codsind = str(row[1])
-                #numloja = str(row[0])
-                
-                # indices acompanhamentos
+                # indices da planilha acompanhamentos
                 cnpj = str(row[2])
                 uf = str(row[4])
                 municipio = str(row[5])
@@ -874,21 +1041,58 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 codsind = str(row[1])
                 numloja = str(row[0]) 
 
+                # =========================================================================
+                # NOVO CÁLCULO DE ATRASO (Dias exatos do calendário)
+                # =========================================================================
                 dias_de_atraso = 0
-                if len(row) > 3 and row[3] is not None:
+                data_base_str = "Desconhecida"
+                
+                if len(row) > 7 and pd.notna(row[7]):
                     try:
-                        dias_de_atraso = float(row[3])     
-                    except (ValueError, TypeError):
+                        valor_celula = row[7] # coluna H da planilha acompanhamentos tem a data-base (oitava coluna = row 7 pq a contagem começa do zero, 0 1 2 3 4 5 6 7)
+                        
+                        # Converte a data dependendo do formato que vem do Excel
+                        if isinstance(valor_celula, (int, float)):
+                            data_base = pd.to_datetime(valor_celula, unit='D', origin='1899-12-30')
+                        else:
+                            data_base = pd.to_datetime(valor_celula, dayfirst=True)
+                            
+                        data_hoje = datetime.now()
+                        
+                        # Zera as horas para a diferença dar o número exato de dias no calendário
+                        data_base = data_base.replace(hour=0, minute=0, second=0, microsecond=0)
+                        data_hoje = data_hoje.replace(hour=0, minute=0, second=0, microsecond=0)
+                        
+                        diferenca = data_base - data_hoje
+                        dias_de_atraso = diferenca.days
+                        data_base_str = data_base.strftime('%d/%m/%Y')
+                        
+                    except Exception as e_data:
+                        print(f"Aviso: Não foi possível calcular a data da Coluna H para a Loja {numloja}. Erro: {e_data}")
                         dias_de_atraso = 0
+                # =========================================================================
+                        
                 primeira_letra_municipio = primeira_letra(municipio) # mudança 1
 
                 if update_callback:
                     update_callback(f"{numloja} | CNPJ: {cnpj}")
-                print("\n" + f"Processando: Loja {numloja} | CNPJ {cnpj} | Código Sindicato {codsind} | Município {municipio}" + "\n")
+                
+                # =========================================================================
+                # PRINTS AGRUPADOS E FÁCEIS DE LER
+                # =========================================================================
+                print("\n" + "="*70)
+                print(f"Processando: Loja {numloja} | CNPJ {cnpj} | Código Sindicato {codsind} | Município {municipio}")
+                
+                if dias_de_atraso < 0:
+                    print(f"[STATUS] ATRASADO em {abs(dias_de_atraso)} dias! (Data-base lida: {data_base_str})")
+                else:
+                    print(f"[STATUS] DENTRO DO PRAZO. Faltam {dias_de_atraso} dias. (Data-base lida: {data_base_str})")
+                print("="*70 + "\n")
 
                 if not cnpj or cnpj == 'None':
                     print(f"CNPJ ausente ou inválido, pulando: CNPJ lido: {cnpj}")
                     continue
+
                 # chama o selenium para o site
                 movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
 
