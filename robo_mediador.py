@@ -63,15 +63,40 @@ def save_last_excel_path(path):
     with open(config_file_path, 'w') as configfile:
         config.write(configfile)
 
+################################################################ log2
+
+def log_erro(arquivo_log, mensagem, cnpj=None, numloja=None):
+    data_log = datetime.now().strftime("%d-%m-%Y_%H-%M")
+    layout_mensagem = (
+        f"Erro na data: {data_log}\n"
+        f"LOJA: {numloja if numloja else 'N/A'} - CNPJ: {cnpj if cnpj else 'N/A'}\n\n"
+        f"{mensagem}\n"
+        f"\n-------------------------------------------------\n\n"
+    )
+    with open(arquivo_log, 'a', encoding='utf-8') as log:
+        log.write(layout_mensagem)
+    print(layout_mensagem)
+
 ################################################################
 
-def log_erro(arquivo_log, mensagem, cnpj=None):
-    data_hora_atual = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    with open(arquivo_log, 'a') as log:
-        log.write(f"{data_hora_atual}: {mensagem}\n")
-        if cnpj:
-            log.write(f"CNPJ: {cnpj}\n")
-    print(f"Erro registrado em {arquivo_log}: {mensagem}")
+def organizar_Log_erro(diretorio_log):
+    try:
+        arquivos = list(Path(diretorio_log).glob("Log Erros_*.txt"))
+
+        if len(arquivos) <= 30:
+            return
+        
+        arquivos.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+        for arquivo in arquivos[30:]:
+            try:
+                os.remove(arquivo)
+                print(f"Removido: {arquivo}")
+            except Exception as erro:
+                print(f"Erro ao remover {arquivo}: {erro}")
+
+    except Exception as erro_geral:
+        print(f"Erro ao gerenciar arquivos de logs: {erro_geral}")
 
 ################################################################
 
@@ -128,7 +153,7 @@ def primeira_letra(palavra):
 
 ################################################################
 
-def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_pasta_municipio=False, is_debug=False):
+def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, usar_pasta_municipio=False, is_debug=False):
     if _stop_flag: return False
     max_tentativas = 3
     tentativa = 0
@@ -203,7 +228,7 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_past
                 os.rename(latest_file, novo_caminho)
                 print(f"Arquivo renomeado para: {novo_nome_doc}")
 
-                if conversao_doc_para_pdf(novo_caminho):
+                if conversao_doc_para_pdf(novo_caminho, cnpj, numloja):
 
                     return True, caminho_final_pdf, pasta_municipio_para_retorno 
                 
@@ -216,15 +241,15 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, numloja, usar_past
                 tentativa += 1
                 continue
             except Exception as e:
-                log_erro(arquivo_log, f"Erro ao renomear arquivo: {str(e)}")
+                log_erro(arquivo_log, f"Erro ao renomear arquivo: {str(e)}", cnpj, numloja)
                 return False, None, None 
-                
+                 
         except Exception as e:
-            log_erro(arquivo_log, f"Erro ao verificar arquivo: {str(e)}")
+            log_erro(arquivo_log, f"Erro ao verificar arquivo: {str(e)}", cnpj, numloja)
             tentativa += 1
             continue
     
-    log_erro(arquivo_log, f"Não foi possível renomear o arquivo após {max_tentativas} tentativas")
+    log_erro(arquivo_log, f"Não foi possível renomear o arquivo após {max_tentativas} tentativas", cnpj, numloja)
     return False, None, None 
 
 ################################################################
@@ -311,7 +336,7 @@ def subpasta_municipio(numloja, municipio, diretorio_base=None):
 
 ################################################################
 
-def conversao_doc_para_pdf(caminho_doc):
+def conversao_doc_para_pdf(caminho_doc, cnpj, numloja):
     if _stop_flag: return False
     word = None
     doc = None
@@ -320,7 +345,7 @@ def conversao_doc_para_pdf(caminho_doc):
         word = win32com.client.DispatchEx("Word.Application")
         
         word.Visible = False
-        word.DisplayAlerts = 0 
+        word.DisplayAlerts = 0  
         word.ScreenUpdating = False 
 
         caminho_doc_absoluto = os.path.abspath(caminho_doc)
@@ -343,7 +368,7 @@ def conversao_doc_para_pdf(caminho_doc):
 
     except Exception as e:
         if 'arquivo_log' in globals():
-            log_erro(arquivo_log, f"Erro ao converter DOC para PDF: {str(e)}")
+            log_erro(arquivo_log, f"Erro ao converter DOC para PDF: {str(e)}", cnpj, numloja)
         
         if doc:
             try: doc.Close(False)
@@ -400,6 +425,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
 
         print("Selecionando opção da categoria")
         #categoria checkbox
+
         aguardar_e_clicar(browser, '//*[@id="chkCategoria"]')
         if _stop_flag: return
 
@@ -476,7 +502,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             if _stop_flag: return
         except Exception as e:
             print("Ocorreu um erro ao selecionar o municipio")
-            log_erro(arquivo_log, f"Erro no município CNPJ: {cnpj}: {str(e)}")
+            log_erro(arquivo_log, f"Erro no município CNPJ: {cnpj} LOJA: {numloja}: {str(e)}")
             return
     
         time.sleep(1)
@@ -639,31 +665,21 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 motivo_reprovacao = "Falha no carregamento da página (Timeout ou Vazia)"
 
                             palavras_filtro = [
-                                "rodoviária", "rodov", "peix", "peixarias", "rodoviarias", 
-                                
-                                "ATACADISTA", "FARMACEUTICOS", 
-                                "OPTICO", "ATAC DE AL E BEB EM GERAL",
-                                "HIPERMERCADOS", "COMERCIO DE BENS E DE SERVICOS",
-                                "ORGANIZACAO DAS COOPERATIVAS",
-                                "COMERCIO DE VEICULOS",
-                                "ESTABELECIMENTOS DE PRESTACAO DE SERVICOS FUNERARIOS",
-                                "SINDICATO DOS LOJISTAS",
-                                "MAT.CONSTR. LOUCAS, TINTAS, FERRAG.",
-                                "ATAC DE PRODUTOS QUIM", "OCERGS-SINDICATO E ORGANIZACAO",
-                                "CONCESSIONARIOS", "DISTRIBUIDORES DE VEICULOS", 
-                                "ORGANIZACAO DAS COOPERATIVAS DO ESTADO", "SINDICATO EMPREGADOS AGENTES AUTONOMOS",
-                                "SIND TRAB COM MINERIOS DERIV PETROLEO", "SINDICATO DAS EMPRESAS DE GARAGENS",
-                                "MINERIOS", "EMPRESAS DE GARAGENS", 
+                                "rodoviária", "rodov", "peix", "peixarias", "rodoviarias", "farmacêuticos",
 
                                 "11.564.609/0001-00", "90.818.667/0001-99", "90.093.345/0001-20", "00.388.455/0001-26",
-                                "10.401.977/0001-74", "90.818.667/0001-99", "01.221.950/0001-09", "91.109.975/0001-08",
+                                "10.401.977/0001-74", "78.508.934/0001-26", "01.221.950/0001-09", "91.109.975/0001-08",
                                 "90.813.726/0001-36", "92.963.693/0001-36", "92.963.297/0001-09", "92.963.651/0001-03",
                                 "03.665.508/0001-05", "92.963.677/0001-43", "54.207.766/0001-70", "92.961.093/0001-39",
                                 "93.074.383/0001-23", "97.056.840/0001-08", "91.167.858/0001-09", "84.307.917/0001-23", 
-                                "83.876.839/0001-15", "59.842.294/0001-41", "76.683.028/0001-32", "15.106.815/0001-27",
+                                "76.687.615/0001-08", "59.842.294/0001-41", "76.682.236/0001-17", "15.106.815/0001-27",
                                 "79.370.367/0001-57", "80.869.894/0001-90", "78.687.431/0001-65", "78.686.888/0001-55",
                                 "77.841.682/0001-90", "04.243.203/0001-60", "79.371.423/0001-78", "82.662.735/0001-45",
-                                "10.695.042/0001-48"
+                                "10.695.042/0001-48", "92.961.523/0001-12", "03.042.025/0001-46", "92.963.875/0001-07",
+                                "89.948.905/0001-00", "92.685.460/0001-19", "91.563.114/0001-03", "10.400.614/0001-14",
+                                "92.941.533/0001-96", "78.492.931/0001-41", "95.619.649/0001-00", "76.683.002/0001-94",
+                                "76.682.210/0001-79", "80.623.622/0001-05", "80.920.085/0001-65", "76.683.010/0001-30",
+                                "01.819.587/0001-28", "76.683.028/0001-32", "10.807.572/0001-30", "78.206.786/0001-95"
                             ]
                              
                             # 11.564.609/0001-00 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DO VALE DO SINOS - SINDIGENEROS/VALE
@@ -685,9 +701,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             # 00.388.455/0001-26 - SIND DO COMERCIO VAREJ DE GENEROS ALIM DE FARROUPILHA
                             # 91.109.975/0001-08 - SIND. DO COM. VAREJISTA DE GENEROS ALIM. DE CX. DO SUL 
                             # 84.307.917/0001-23 - SIND DOS TRAB COM MIN E DERIV DE PETROLEO NO EST S CAT
-                            # 83.876.839/0001-15 - FEDERACAO DO COMERCIO DE BENS, SERVICOS E TURISMO DO ESTADO DE SANTA CATARINA
                             # 59.842.294/0001-41 - SIND NACIONAL EMPR DISTRIBUIDORAS PRODUTOS SIDERURGICOS
-                            # 76.683.028/0001-32 - SINDICATO INTERMUNICIPAL DO COMERCIO VAREJISTA DE MATERIAIS
                             # 15.106.815/0001-27 - SINDICATO DAS EMPRESAS CEREALISTAS DO ESTADO DO PARANA
                             # 79.370.367/0001-57 - SIND DO COM VAREJ DE PROD FARMACEUT, DE USO HUMANO E ANIMAL
                             # 80.869.894/0001-90 - SIND DOS MOTORISTAS, CONDUT. DE VEIC. RODOV URBANOS E EM GERAL, TRAB.TRANSP. ROD. PBCO
@@ -698,6 +712,28 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             # 79.371.423/0001-78 - SINDICATO DAS EMPRESAS DE SERVICOS CONTABEIS E DAS EMPRESAS DE ASSESSORAMENTO, PERICIAS, INFORMACOES E PESQUISAS DE BLUMENAU E REGIAO
                             # 82.662.735/0001-45 - SIND DO COM VAR DE PROD FARMAC DO VALE DO ITAJAI
                             # 10.695.042/0001-48 - SINDICATO DAS EMPRESAS DE SISTEMAS ELETRONICOS DE SEGURANCA DO ESTADO DE SANTA CATARINA - SIESE-SC
+                            # 92.961.523/0001-12 - SINDICATO DO COMERCIO DE VEICULOS E DE PECAS E ACESSORIOS PA
+                            # 03.042.025/0001-46 - SINDICATO DO COM VAR MAT OPTICO FOTO E CINE DO RS
+                            # 92.963.875/0001-07 - SINDICATO DO COM VAREJ DE PROD FARMACEUTICOS NO EST RGS
+                            # 89.948.905/0001-00 - SINDICATO DOS ESTABELECIMENTOS DE PRESTACAO DE SERVICOS FUNERARIOS DO ESTADO DO RIO GRANDE DO SUL
+                            # 92.685.460/0001-19 - OCERGS-SINDICATO E ORGANIZACAO DAS COOPERATIVAS DO ESTADO DO RS
+                            # 10.400.614/0001-14 - FEDERACAO INTERMUNICIPAL DE SINDICATOS DE TRABALHADORES NO COMERCIO DE BENS E SERVICO DA FORCA SINDICAL NO ESTADO DO RIO GRANDE DO SUL - FETRACOS/RS
+                            # 92.941.533/0001-96 - SINDICATO DO COMERCIO ATACADISTA DE MADEIRAS DE PA
+                            # 91.563.114/0001-03 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS E DO COMERCIO VAREJISTA DE SUPERMERCADOS E HIPERMERCADOS DE PELOTAS
+                            # 78.492.931/0001-41 - SINCODIV -SINDICATO DOS CONCESSIONARIOS E DISTRIBUIDORES DE VEICULOS NO ESTADO DE SANTA CATARINA
+                            # 95.619.649/0001-00 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS E DO
+                            # 80.623.622/0001-05 - SIND DO COM VAREJ DE PRODUTOS FARMACEUTICOS DO OES CAT
+                            # 76.683.002/0001-94 - SINDICATO DO COM ATAC DE DROGAS E MEDIC NO ESTADO DO PR
+                            # 76.682.210/0001-79 - SINDICATO DO COM VAREJ DE PRODUTOS FARM DO ESTADO DO PR
+                            # 76.687.615/0001-08 - SINDICATO DO COMERCIO ATACADISTA DE MADEIRAS DO PARANA
+                            # 76.682.236/0001-17 - SINDICATO DO COM DE VEIC PECAS E ACES PARA VEIC, MOT E BIC, COM IMPORT, DISTR DE AUTOP E MOTOP, ROL E ACES NO EST DO PARANA
+                            # 78.508.934/0001-26 - SINDICATO DO COM VAR DE GEN ALIM DO ALTO IRANI SC
+                            # 80.920.085/0001-65 - SINDICATO DO COMERCIO VAREJISTA DE MATERIAL OPTICO, FOTOGRAF, CNPJ n. 80.920.085/0001-65
+                            # 76.683.010/0001-30 - SINDICATO DO COMERCIO ATACADISTA E DISTRIBUIDORES DO ES"TADO
+                            # 01.819.587/0001-28 - SINDICATO DOS CONCESSIONARIOS E DISTRIBUIDORES DE VEICU
+                            # 76.683.028/0001-32 - SINDICATO INTERMUNICIPAL DO COMERCIO VAREJISTA DE MATERIAIS
+                            # 10.807.572/0001-30 - SINDICATO DO COMERCIO ATACADISTA E DISTRIBUIDOR DE JOACABA E
+                            # 78.206.786/0001-95 - SIND DOS ESTABELECIMENTOS DE SERV FUNERARIO EST PARANA
 
                             for palavra in palavras_filtro:
                                 palavra_limpa_filtro = remove_acentos(palavra.lower())
@@ -779,6 +815,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 codsind, 
                                 municipio, 
                                 cidade_sind, 
+                                cnpj,
                                 f"{numloja}__{contador_baixados}" if usar_pasta_municipio_na_chamada else numloja, 
                                 usar_pasta_municipio=usar_pasta_municipio_na_chamada
                             )
@@ -815,7 +852,9 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                         shutil.move(pdf_path, atrasados_dir)
 
                         except Exception as e_down:
-                            log_erro(arquivo_log, f"Erro ao executar o download do arquivo aprovado {contador_baixados}: {str(e_down)}")
+                            import traceback
+                            print(traceback.format_exc())
+                            log_erro(arquivo_log, f"Erro ao executar o download do arquivo aprovado {contador_baixados}: {str(e_down)}", cnpj, numloja)
 
                 # =========================================================================
                 # PASSO 4: FASE DE AUDITORIA (DEBUG MODE PARA BAIXAR ARQUIVOS FILTRADOS)
@@ -831,7 +870,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                         index_real = doc_reprovado['indice']
                         motivo = doc_reprovado['motivo']
                         
-                        try:
+                        try:    
                             janelas_antes_download = set(browser.window_handles)
                             botoes_atuais = browser.find_elements(By.XPATH, '//*[@id="btnDownload"]/a')
                             
@@ -858,7 +897,10 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
 
                             # Renomeia, Converte e ROTEIA direto para a pasta DEBUG!
                             sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
-                                codsind, municipio, cidade_sind, 
+                                codsind, 
+                                municipio, 
+                                cidade_sind, 
+                                cnpj,
                                 f"{numloja}___filtrado_{contador_debug}" if usar_pasta_debug else f"{numloja}__filtrado", 
                                 usar_pasta_municipio=usar_pasta_debug,
                                 is_debug=True # gatilho que define se deve passar para pasta de debug
@@ -876,7 +918,9 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 print("Não foi possível processar o arquivo reprovado.")
 
                         except Exception as e_debug:
-                            log_erro(arquivo_log, f"Erro ao executar o download do arquivo de auditoria {contador_debug}: {str(e_debug)}")
+                            import traceback
+                            print(traceback.format_exc())
+                            log_erro(arquivo_log, f"Erro ao executar o download do arquivo de auditoria {contador_debug}: {str(e_debug)}", cnpj, numloja)
                         
                     with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
                         f.write("\n")
@@ -887,7 +931,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
 
     except Exception as e:
         log_erro(
-            arquivo_log, f"Erro na função movimentacao_site: {str(e)}", cnpj)
+            arquivo_log, f"Erro na função movimentacao_site: {str(e)}", cnpj, numloja)
         print(f"Erro na função movimentacao_site: {str(e)}")
         
 #############################################################################
@@ -917,15 +961,17 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         caminho_relatorio_filtros = os.path.join(filtrados_debug_dir, "Relatorio_Filtros_Reprovados.txt")
         
         pasta_log = os.path.join(mediador_dir, "Logs")
-        arquivo_log = os.path.join(pasta_log, "Log Erros.txt")
-        diretorio_log = os.path.dirname(arquivo_log)
+        timestamp_sessao = datetime.now().strftime("%d-%m-%Y_%H-%M")
+        arquivo_log = os.path.join(pasta_log, f"Log Erros_{timestamp_sessao}.txt")
+        diretorio_log = os.path.dirname(arquivo_log)     
         caminho_log_hist = None
-        
+        #LOG DIRETORIO HISTÓRICO
         os.makedirs(diretorio_log, exist_ok=True)
         os.makedirs(download_dir, exist_ok=True)
         os.makedirs(atrasados_dir, exist_ok=True)
         os.makedirs(historico_dir, exist_ok=True)
         os.makedirs(filtrados_debug_dir, exist_ok=True) # Garante que a pasta de filtrados existe
+        os.makedirs(pasta_log, exist_ok=True)
 
         # Se o modo debug estiver ativo, coloca o cabeçalho temporal no relatório
         if MODO_DEBUG_FILTRO:
