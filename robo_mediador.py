@@ -63,7 +63,7 @@ def save_last_excel_path(path):
     with open(config_file_path, 'w') as configfile:
         config.write(configfile)
 
-################################################################ log2
+################################################################
 
 def log_erro(arquivo_log, mensagem, cnpj=None, numloja=None):
     data_log = datetime.now().strftime("%d-%m-%Y_%H-%M")
@@ -209,7 +209,6 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, usa
             municipio_sem_acentos = remove_acentos(municipio)
             municipio_formatado = municipio_sem_acentos.upper()
             novo_nome_doc = f"{numloja_formatado}_{municipio_formatado}_{cidade_sind_limpa}_SIND{codsind_formatado}{sufixo_formatado}.doc"
-
 
             diretorio_destino = filtrados_debug_dir if is_debug else download_dir
 
@@ -379,7 +378,7 @@ def conversao_doc_para_pdf(caminho_doc, cnpj, numloja):
         return False
 ################################################################  
 
-def aguardar_e_clicar(browser, xpath, tempo=30): # Mudança 7 
+def aguardar_e_clicar(browser, xpath, tempo=30):
     try:
         elemento = WebDriverWait(browser, tempo).until(
             EC.element_to_be_clickable((By.XPATH, xpath))
@@ -546,14 +545,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             else:
                 total_botoes = len(botoes_download_iniciais)
                 print(f"{total_botoes} botões de download encontrados. Iniciando varredura...")
-
-                # =========================================================================
-                # SISTEMA DE DOIS PASSOS
-                # =========================================================================
-                # PASSO 1: FASE DE MAPEAMENTO COM EVASÃO DE FIREWALL (WAF)
-                # O robô vai entrar em TODAS as abas de visualizar e apenas anotar os índices (posições) dos botões que não contém palavras proibidas. 
-                # NENHUM download é feito nesta fase.
-                # =========================================================================
                 
                 indices_aprovados = [] # Lista que guardará os botões que passaram no filtro
                 documentos_reprovados = [] # Guardará os reprovados no formato {'indice': i, 'motivo': palavra}
@@ -594,10 +585,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             WebDriverWait(browser, 15).until(EC.number_of_windows_to_be(len(janelas_antes) + 1))
                             nova_aba = (set(browser.window_handles) - janelas_antes).pop()
                             browser.switch_to.window(nova_aba)
-                            
-                            # =========================================================================
+                    
                             # ESPERA INTELIGENTE DE LEITURA v4.0 + DETECÇÃO DE FIREWALL
-                            # =========================================================================
                             texto_da_pagina_lower = ""
                             tempo_limite = 30 
                             tamanho_anterior = 0
@@ -641,11 +630,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                     pass 
                                     
                                 time.sleep(1) 
-                                
-                            # =========================================================================
-                            # TRATAMENTO PÓS-ESPERA (Decide o que fazer se bateu no WAF)
-                            # =========================================================================
                             
+                            # TRATAMENTO PÓS-ESPERA (Decide o que fazer se bateu no WAF)
                             if bateu_no_waf:
                                 tempo_espera = 30 * (tentativas_waf + 1)
                                 print(f"[WAF] Firewall do governo detectado! Resfriando IP por {tempo_espera} segundos...")
@@ -764,9 +750,25 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             # 13.501.619/0001-21 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DE S
                             # 82.512.864/0001-57 - ORGANIZACAO DAS COOPERATIVAS DO ESTADO DE STA CATARINA
 
+                            excecoes_lojas = {
+                                430: ["79.266.730/0001-99"],
+                                437: ["79.266.730/0001-99"],
+                                467: ["78.508.934/0001-26"],
+                                478: ["76.683.010/0001-30", "76.687.615/0001-08", "76.683.002/0001-94", "76.682.210/0001-79"],
+                                591: ["76.683.010/0001-30", "76.687.615/0001-08", "76.683.002/0001-94"],
+                                610: ["76.683.010/0001-30", "76.687.615/0001-08", "76.683.002/0001-94", "76.682.210/0001-79"],
+                            }
+                            cnpjs_ignorados = [
+                                remove_acentos(c.lower()) for c in excecoes_lojas.get(int(numloja), [])
+                            ]
+
                             for palavra in palavras_filtro:
                                 palavra_limpa_filtro = remove_acentos(palavra.lower())
                                 if palavra_limpa_filtro in texto_da_pagina_lower:
+
+                                    if palavra_limpa_filtro in cnpjs_ignorados:
+                                        print(f"Filtro '{palavra}' IGNORADO — exceção da loja {numloja}.")
+                                        continue  # pula só esse, demais filtros continuam
                                     print(f"Documento REPROVADO no filtro. Palavra '{palavra}' encontrada.")
                                     pular_este_arquivo = True
                                     motivo_reprovacao = f"Palavra '{palavra}'"
@@ -789,10 +791,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             browser.switch_to.window(original_window) 
                             break # Sai do while em caso de erro crítico que não seja o WAF
 
-                # =========================================================================
-                # PASSO 2: FASE DE DECISÃO ESTRUTURAL
-                # Agora o robô sabe exatamente quantos e quais arquivos ele VAI baixar.
-                # =========================================================================
                 qtd_aprovados = len(indices_aprovados)
                 
                 if qtd_aprovados == 0:
@@ -805,11 +803,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                     # Só criamos pasta para loja se tivermos MAIS de um arquivo REALMENTE aprovado
                     usar_pasta_municipio_na_chamada = qtd_aprovados > 1
 
-                    # =========================================================================
-                    # PASSO 3: FASE DE EXECUÇÃO (DOWNLOAD E NOMEAÇÃO LIMPA)
-                    # =========================================================================
-                    # Vamos percorrer apenas os índices anotados. 
-                    # Usamos 'contador_baixados' para numerar os arquivos sequencialmente (1, 2, 3...) independentemente da posição que eles ocupavam no site.
                     for contador_baixados, index_real in enumerate(indices_aprovados, start=1):
                         if _stop_flag: return
                         
@@ -885,9 +878,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             print(traceback.format_exc())
                             log_erro(arquivo_log, f"Erro ao executar o download do arquivo aprovado {contador_baixados}: {str(e_down)}", cnpj, numloja)
 
-                # =========================================================================
-                # PASSO 4: FASE DE AUDITORIA (DEBUG MODE PARA BAIXAR ARQUIVOS FILTRADOS)
-                # =========================================================================
+                # FASE DE AUDITORIA (DEBUG MODE PARA BAIXAR ARQUIVOS FILTRADOS)
                 if MODO_DEBUG_FILTRO and documentos_reprovados:
                     print(f"\n[MODO DEBUG] Iniciando download de {len(documentos_reprovados)} documento(s) REPROVADOS para auditoria...")
                     
@@ -953,7 +944,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                         
                     with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
                         f.write("\n")
-                # =========================================================================
 
             browser.get('http://www3.mte.gov.br/sistemas/mediador/ConsultarInstColetivo')
             if _stop_flag: return
@@ -973,7 +963,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
     # MODO DEBUG DOS FILTROS (baixa o que foi filtrado para auditoria)
     global MODO_DEBUG_FILTRO, filtrados_debug_dir, caminho_relatorio_filtros
     # para testar o modo debug essa variável precisa receber 'True'
-    MODO_DEBUG_FILTRO = True # Mude para False quando for criar o executável de produção
+    MODO_DEBUG_FILTRO = False # Mude para False quando for criar o executável de produção
 
     _stop_flag = False
     _browser_driver = None
@@ -1116,9 +1106,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 codsind = str(row[1])
                 numloja = str(row[0]) 
 
-                # =========================================================================
                 # NOVO CÁLCULO DE ATRASO (Dias exatos do calendário)
-                # =========================================================================
                 dias_de_atraso = 0
                 data_base_str = "Desconhecida"
                 
@@ -1145,16 +1133,13 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                     except Exception as e_data:
                         print(f"Aviso: Não foi possível calcular a data da Coluna H para a Loja {numloja}. Erro: {e_data}")
                         dias_de_atraso = 0
-                # =========================================================================
                         
-                primeira_letra_municipio = primeira_letra(municipio) # mudança 1
+                primeira_letra_municipio = primeira_letra(municipio) 
 
                 if update_callback:
                     update_callback(f"{numloja} | CNPJ: {cnpj}")
                 
-                # =========================================================================
                 # PRINTS AGRUPADOS E FÁCEIS DE LER
-                # =========================================================================
                 print("\n" + "="*70)
                 print(f"Processando: Loja {numloja} | CNPJ {cnpj} | Código Sindicato {codsind} | Município {municipio}")
                 
