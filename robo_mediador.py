@@ -671,7 +671,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 "92.517.457/0001-96", "03.499.644/0001-64", "43.450.014/0001-10", "52.806.460/0001-05",
                                 "60.746.419/0001-19", "62.809.777/0001-59", "62.660.410/0001-16", "38.891.073/0001-93",
                                 "62.202.759/0001-04", "62.803.085/0001-01", "15.336.300/0001-13", "62.216.627/0001-31",
-                                "60.976.404/0001-47", "13.501.619/0001-21", "82.512.864/0001-57"
+                                "60.976.404/0001-47", "13.501.619/0001-21", "82.512.864/0001-57", "10.834.792/0001-53",
+                                "83.797.191/0001-91", "08.580.010/0001-55"
                             ]
                              
                             # 11.564.609/0001-00 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DO VALE DO SINOS - SINDIGENEROS/VALE
@@ -749,6 +750,9 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             # 60.976.404/0001-47 - SIN EMPREG AG AUT COM EMP ASS P IF PQ EMP SERV CONT ESP
                             # 13.501.619/0001-21 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DE S
                             # 82.512.864/0001-57 - ORGANIZACAO DAS COOPERATIVAS DO ESTADO DE STA CATARINA
+                            # 10.834.792/0001-53 - SINDICATO DO COMERCIO VAREJISTA DE GENEROS ALIMENTICIOS DE PASSO FUNDO
+                            # 83.797.191/0001-91 - SINDICATO DAS EMPRESAS DE SERVICOS CONTABEIS, ASSESSORAMENTO, PERICIAS, INFORMACOES E PESQUISAS NO ESTADO DE SANTA CATARINA - SESCON/SC 
+                            # 08.580.010/0001-55 - SESCON SUL DE SANTA CATARINA - SINDICATO DAS EMPRESAS DE SERV.CONT.E DAS EMPR.DE ASSESS. PERICIA, INFORM.E PESQ. DO SUL DE SC
 
                             excecoes_lojas = {
                                 430: ["79.266.730/0001-99"],
@@ -761,18 +765,21 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             cnpjs_ignorados = [
                                 remove_acentos(c.lower()) for c in excecoes_lojas.get(int(numloja), [])
                             ]
+                            
+                            excecao_encontrada = any(cnpj in texto_da_pagina_lower for cnpj in cnpjs_ignorados) #percorre a lista de cnpjs
 
-                            for palavra in palavras_filtro:
-                                palavra_limpa_filtro = remove_acentos(palavra.lower())
-                                if palavra_limpa_filtro in texto_da_pagina_lower:
-
-                                    if palavra_limpa_filtro in cnpjs_ignorados:
-                                        print(f"Filtro '{palavra}' IGNORADO — exceção da loja {numloja}.")
-                                        continue  # pula só esse, demais filtros continuam
-                                    print(f"Documento REPROVADO no filtro. Palavra '{palavra}' encontrada.")
-                                    pular_este_arquivo = True
-                                    motivo_reprovacao = f"Palavra '{palavra}'"
-                                    break
+                            if excecao_encontrada:
+                                print(f"Exceção encontrada na loja {numloja} — documento aprovado, filtro ignorado.")
+                                pular_este_arquivo = False
+                                motivo_reprovacao = None
+                            else: # se for false
+                                for palavra in palavras_filtro: # roda o filtro normal
+                                    palavra_limpa_filtro = remove_acentos(palavra.lower())
+                                    if palavra_limpa_filtro in texto_da_pagina_lower:
+                                        print(f"Documento REPROVADO no filtro. Palavra '{palavra}' encontrada.")
+                                        pular_este_arquivo = True
+                                        motivo_reprovacao = f"Palavra '{palavra}'"
+                                        break
 
                             # Se passou no filtro vai para a lista de APROVADOS, senão vai para a de REPROVADOS
                             if not pular_este_arquivo:
@@ -1053,7 +1060,12 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         chrome_options.add_argument("disable-infobars")
         chrome_options.add_argument("--ignore-certificate-errors")
         chrome_options.add_argument("--allow-running-insecure-content")
-        chrome_options.add_argument("--headless=new")
+        #chrome_options.add_argument("--headless=new")
+
+        chrome_options.add_argument("--disable-background-timer-throttling")
+        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+        chrome_options.add_argument("--disable-renderer-backgrounding")
+        chrome_options.add_argument("--disable-features=CalculateNativeWinOcclusion")
         
         final_download_path = os.path.abspath(download_dir)
         print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
