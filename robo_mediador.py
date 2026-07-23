@@ -248,7 +248,7 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, usa
             tentativa += 1
             continue
     
-    log_erro(arquivo_log, f"Não foi possível renomear o arquivo após {max_tentativas} tentativas", cnpj, numloja)
+    log_erro(arquivo_log, f"Não foi possível renomear o arquivo após {max_tentativas} tentativas (arquivo pode não ter sido baixado ou estar em uso)", cnpj, numloja)
     return False, None, None 
 
 ################################################################
@@ -495,7 +495,9 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                     break
             
             if not municipio_encontrado:
-                raise ValueError(f"Município '{municipio}' não encontrado na lista do site.")
+                print(f"Município '{municipio}' não encontrado na lista do site.")
+                registrar_sem_doc(numloja, cnpj, municipio, codsind)
+                return
 
             aguardar_e_clicar(browser, '/html/body/div[3]/div[3]/div/button/span')
             if _stop_flag: return
@@ -959,7 +961,39 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
         log_erro(
             arquivo_log, f"Erro na função movimentacao_site: {str(e)}", cnpj, numloja)
         print(f"Erro na função movimentacao_site: {str(e)}")
-        
+
+#############################################################################
+def criar_browser(download_dir):
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("disable-infobars")
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument("--allow-running-insecure-content")
+    #chrome_options.add_argument("--headless=new")
+     
+    chrome_options.add_argument("--window-position=-2400,-2400")
+    chrome_options.add_argument("--window-size=1920,1080")
+
+    chrome_options.add_argument("--disable-background-timer-throttling")
+    chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+    chrome_options.add_argument("--disable-renderer-backgrounding")
+    chrome_options.add_argument("--disable-features=CalculateNativeWinOcclusion")
+
+    final_download_path = os.path.abspath(download_dir)
+    print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
+    prefs = {
+        "download.prompt_for_download": False, 
+        "download.directory_upgrade": True,
+        "profile.default_content_settings.popups": 0,
+        "download.default_directory": final_download_path,
+        "safebrowsing.enabled": False, 
+        "safebrowsing.disable_download_protection": True
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
+
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.get('http://www3.mte.gov.br/sistemas/mediador/ConsultarInstColetivo')
+    return driver
 #############################################################################
 
 def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_callback=None): #  parte principal do código
@@ -996,11 +1030,11 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         os.makedirs(download_dir, exist_ok=True)
         os.makedirs(atrasados_dir, exist_ok=True)
         os.makedirs(historico_dir, exist_ok=True)
-        os.makedirs(filtrados_debug_dir, exist_ok=True) # Garante que a pasta de filtrados existe
         os.makedirs(pasta_log, exist_ok=True)
 
         # Se o modo debug estiver ativo, coloca o cabeçalho temporal no relatório
         if MODO_DEBUG_FILTRO:
+            os.makedirs(filtrados_debug_dir, exist_ok=True) # Garante que a pasta de filtrados existe
             with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
                 f.write(f"\n=== NOVA EXECUÇÃO DE DEBUG: {datetime.now().strftime('%d/%m/%Y às %H:%M')} ===\n")
 
@@ -1036,6 +1070,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                         todas_as_lojas.append(int(row[0]))
                 except (ValueError, TypeError):
                     continue
+                
             
             todas_as_lojas = sorted(list(set(todas_as_lojas)))
             
@@ -1053,30 +1088,10 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         except (ValueError, TypeError):
             print(f"Valor '{loja_inicial}' inválido para loja inicial. Iniciando do começo.")
             iniciar_processamento_agora = True
-            
-    try:
-        chrome_options = Options()
-        chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("disable-infobars")
-        chrome_options.add_argument("--ignore-certificate-errors")
-        chrome_options.add_argument("--allow-running-insecure-content")
-        #chrome_options.add_argument("--headless=new")
 
-        chrome_options.add_argument("--disable-background-timer-throttling")
-        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-        chrome_options.add_argument("--disable-renderer-backgrounding")
-        chrome_options.add_argument("--disable-features=CalculateNativeWinOcclusion")
-        
-        final_download_path = os.path.abspath(download_dir)
-        print(f"INFO: Configurando diretório de download do Chrome para: {final_download_path}")
-        prefs = {
-            "download.prompt_for_download": False, "download.directory_upgrade": True,
-            "safeBrowse.enabled": False, "profile.default_content_settings.popups": 0,
-            "download.default_directory": final_download_path,
-            "safeBrowse.disable_download_protection": True
-        }
-        chrome_options.add_experimental_option("prefs", prefs)
-        _browser_driver = webdriver.Chrome(options=chrome_options)
+    # Chama a função criar_browser    
+    try:
+        _browser_driver = criar_browser(download_dir)
         browser = _browser_driver
     except Exception as e:
         log_erro(arquivo_log, f"Ocorreu um erro ao abrir o Chrome: {str(e)}")
@@ -1087,6 +1102,9 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         try:
             browser.get('http://www3.mte.gov.br/sistemas/mediador/ConsultarInstColetivo')
             print("Página carregada")
+
+            contador_lojas_processadas = 0        
+            RESTART_A_CADA = 50
 
             for row in df.itertuples(index=False):
                 numloja = row[0]
@@ -1165,8 +1183,27 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                     print(f"CNPJ ausente ou inválido, pulando: CNPJ lido: {cnpj}")
                     continue
 
+                # --- RESTART PERIÓDICO DO DRIVER ---
+                if contador_lojas_processadas > 0 and contador_lojas_processadas % RESTART_A_CADA == 0:
+                    print(f"\n>>> {contador_lojas_processadas} lojas processadas. Reiniciando o navegador para liberar memória... <<<\n")
+                    try:
+                        browser.quit()
+                    except Exception as e_quit:
+                        print(f"Aviso ao fechar navegador antigo: {e_quit}")
+
+                    time.sleep(2)
+
+                    try:
+                        _browser_driver = criar_browser(download_dir)
+                        browser = _browser_driver
+                    except Exception as e_restart:
+                        log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
+                        break
+                # ---
+
                 # chama o selenium para o site
                 movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
+                contador_lojas_processadas += 1
 
             if not _stop_flag:
                 print("Processamento concluído.")
