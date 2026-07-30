@@ -19,6 +19,8 @@ import shutil
 import pandas as pd
 import re
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import InvalidSessionIdException
+from selenium.common.exceptions import StaleElementReferenceException
 
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboMediador")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
@@ -26,6 +28,7 @@ config_file_path = os.path.join(APP_CONFIG_DIR, "config.ini")
 
 execucao_registrada = False
 caminho_log_hist = None
+_falhas_consecutivas = {}
 
 ################################################################
 
@@ -248,7 +251,7 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, usa
             tentativa += 1
             continue
     
-    log_erro(arquivo_log, f"Não foi possível renomear o arquivo após {max_tentativas} tentativas (arquivo pode não ter sido baixado ou estar em uso)", cnpj, numloja)
+    log_erro(arquivo_log, f"Não foi possível renomear o arquivo após {max_tentativas} tentativas (Arquivo pode não ter sido baixado, estar em uso ou a permissão pode ter sido negada.)", cnpj, numloja)
     return False, None, None 
 
 ################################################################
@@ -383,7 +386,12 @@ def aguardar_e_clicar(browser, xpath, tempo=30):
         elemento = WebDriverWait(browser, tempo).until(
             EC.element_to_be_clickable((By.XPATH, xpath))
         )
-        elemento.click()
+        try:
+            elemento.click()
+        except Exception:
+            # Clique via JS, ignora overlay temporário
+            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", elemento)
+            browser.execute_script("arguments[0].click();", elemento)
         return elemento
     except TimeoutException:
         print(f"Erro: Tempo esgotado esperando o elemento: {xpath}")
@@ -487,12 +495,28 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
         time.sleep(1.5)
         try:
             municipio_encontrado = False
-            for elemento in municipios_elementos:
-                if _stop_flag: return
-                if remove_acentos(elemento.text.strip().lower()) == municipio_normalizado:
-                    elemento.click()
-                    municipio_encontrado = True
-                    break
+            max_tentativas_stale = 3
+            for tentativa_stale in range(max_tentativas_stale):
+                try:
+                    municipios_elementos = browser.find_elements(By.XPATH, municipios_xpath)
+                    for elemento in municipios_elementos:
+                        if _stop_flag: return
+                        if remove_acentos(elemento.text.strip().lower()) == municipio_normalizado:
+                            try:
+                                WebDriverWait(browser, 5).until(
+                                    EC.invisibility_of_element_located((By.CSS_SELECTOR, ".ui-widget-overlay"))
+                                )
+                            except TimeoutException:
+                                pass
+                            browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", elemento)
+                            browser.execute_script("arguments[0].click();", elemento)
+                            municipio_encontrado = True
+                            break
+                    break  
+                except StaleElementReferenceException:
+                    print(f"Elemento obsoleto, tentando novamente ({tentativa_stale+1}/{max_tentativas_stale})...")
+                    time.sleep(1)
+                    continue
             
             if not municipio_encontrado:
                 print(f"Município '{municipio}' não encontrado na lista do site.")
@@ -583,12 +607,10 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             time.sleep(1)
                             browser.execute_script("arguments[0].click();", botao_visualizar)
 
-                            # Vai para a nova aba de texto
                             WebDriverWait(browser, 15).until(EC.number_of_windows_to_be(len(janelas_antes) + 1))
                             nova_aba = (set(browser.window_handles) - janelas_antes).pop()
                             browser.switch_to.window(nova_aba)
                     
-                            # ESPERA INTELIGENTE DE LEITURA v4.0 + DETECÇÃO DE FIREWALL
                             texto_da_pagina_lower = ""
                             tempo_limite = 30 
                             tamanho_anterior = 0
@@ -609,10 +631,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                     texto_cru_limpo = remove_acentos(texto_cru_lower)
                                     texto_temp = re.sub(r'\s+', ' ', texto_cru_limpo)
                                     
-                                    # checa o tamanho do texto presente no documento, se for mt curto (< 100 caracteres) provavelmente a preview ainda está carregando
                                     tamanho_atual = len(texto_temp.strip())
                                     
-                                    # Ignora se for menor que 100 caracteres (página carregando)
                                     if tamanho_atual < 100 or "ocorreu um erro" in texto_temp or "service unavailable" in texto_temp:
                                         time.sleep(1)
                                         continue
@@ -626,7 +646,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                     
                                     if contador_estabilidade >= 2:
                                         texto_da_pagina_lower = texto_temp
-                                        break # Sai do loop com o texto 100% completo!
+                                        break # Sai do loop com o texto 100% completo
                                         
                                 except:
                                     pass 
@@ -783,14 +803,12 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                         motivo_reprovacao = f"Palavra '{palavra}'"
                                         break
 
-                            # Se passou no filtro vai para a lista de APROVADOS, senão vai para a de REPROVADOS
                             if not pular_este_arquivo:
                                 print(f"Documento APROVADO! Adicionado à fila de download principal.")
                                 indices_aprovados.append(i) 
                             else:
                                 documentos_reprovados.append({'indice': i, 'motivo': motivo_reprovacao})
 
-                            # Fecha a aba de leitura e volta para a principal
                             browser.close() 
                             browser.switch_to.window(original_window) 
                             time.sleep(1)
@@ -809,7 +827,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                 else:
                     print(f"Mapeamento concluído. {qtd_aprovados} documento(s) serão baixados.")
                     
-                    # Só criamos pasta para loja se tivermos MAIS de um arquivo REALMENTE aprovado
                     usar_pasta_municipio_na_chamada = qtd_aprovados > 1
 
                     for contador_baixados, index_real in enumerate(indices_aprovados, start=1):
@@ -830,9 +847,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             print(f"Baixando documento ({contador_baixados}/{qtd_aprovados}) ...")
                             time.sleep(5) # Respiro do servidor para gerar o arquivo
                            
-                            # Limpeza de janelas extras de download
                             try:
-                                WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download))
+                                WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download)) # Limpeza de janelas extras de download
                                 novas_janelas = set(browser.window_handles) - janelas_antes_download
                                 for aba in novas_janelas:
                                     browser.switch_to.window(aba)
@@ -841,7 +857,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             except:
                                 pass
 
-                            # Renomeia usando o nosso contador lógico sequencial
                             sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
                                 codsind, 
                                 municipio, 
@@ -861,23 +876,20 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                         # Cria a pasta de destino se não existir
                                         destino_atrasado_pasta = os.path.join(atrasados_dir, os.path.basename(folder_path))
                                         os.makedirs(destino_atrasado_pasta, exist_ok=True)
-                                        
-                                        # Move apenas o ARQUIVO PDF para dentro dela (mesclando as pastas)
+                                     
                                         if pdf_path and os.path.exists(pdf_path):
                                             destino_pdf = os.path.join(destino_atrasado_pasta, os.path.basename(pdf_path))
                                             if os.path.exists(destino_pdf):
                                                 os.remove(destino_pdf)
                                             shutil.move(pdf_path, destino_pdf)
                                             
-                                        # Limpa a pasta vazia que sobrou na raiz do Downloads
                                         try:
-                                            os.rmdir(folder_path)
+                                            os.rmdir(folder_path) # Limpa a pasta vazia que sobrou na raiz do Downloads
                                         except:
                                             pass
 
                                     elif pdf_path:
-                                        # Movimentação normal para arquivos soltos (sem pasta)
-                                        destino_atrasado = os.path.join(atrasados_dir, os.path.basename(pdf_path))
+                                        destino_atrasado = os.path.join(atrasados_dir, os.path.basename(pdf_path))   # Movimentação normal para arquivos soltos (sem pasta)
                                         if os.path.exists(destino_atrasado):
                                             os.remove(destino_atrasado)
                                         shutil.move(pdf_path, atrasados_dir)
@@ -887,11 +899,10 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             print(traceback.format_exc())
                             log_erro(arquivo_log, f"Erro ao executar o download do arquivo aprovado {contador_baixados}: {str(e_down)}", cnpj, numloja)
 
-                # FASE DE AUDITORIA (DEBUG MODE PARA BAIXAR ARQUIVOS FILTRADOS)
+                # Fase de auditoria (DEBUG MODE para baixar arquivos filtrados)
                 if MODO_DEBUG_FILTRO and documentos_reprovados:
                     print(f"\n[MODO DEBUG] Iniciando download de {len(documentos_reprovados)} documento(s) REPROVADOS para auditoria...")
                     
-                    # Define se cria subpasta dentro do FILTRADOS_DEBUG
                     usar_pasta_debug = len(documentos_reprovados) > 1
 
                     for contador_debug, doc_reprovado in enumerate(documentos_reprovados, start=1):
@@ -913,9 +924,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             print(f"Baixando documento REPROVADO ({contador_debug}/{len(documentos_reprovados)}) ...")
                             time.sleep(5) # Respiro do servidor
                            
-                            # Limpeza de janelas extras de download
                             try:
-                                WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download))
+                                WebDriverWait(browser, 5).until(lambda drv: len(drv.window_handles) > len(janelas_antes_download)) # Limpeza de janelas extras de download
                                 novas_janelas = set(browser.window_handles) - janelas_antes_download
                                 for aba in novas_janelas:
                                     browser.switch_to.window(aba)
@@ -924,21 +934,19 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             except:
                                 pass
 
-                            # Renomeia, Converte e ROTEIA direto para a pasta DEBUG!
-                            sucesso, pdf_path, folder_path = renomear_arquivo_baixado(
+                            sucesso, pdf_path, folder_path = renomear_arquivo_baixado(  # Renomeia, Converte e ROTEIA direto para a pasta DEBUG
                                 codsind, 
                                 municipio, 
                                 cidade_sind, 
                                 cnpj,
                                 f"{numloja}___filtrado_{contador_debug}" if usar_pasta_debug else f"{numloja}__filtrado", 
                                 usar_pasta_municipio=usar_pasta_debug,
-                                is_debug=True # gatilho que define se deve passar para pasta de debug
+                                is_debug=True 
                             )
                             
                             if sucesso:
                                 nome_arquivo_salvo = os.path.basename(pdf_path) if pdf_path else "Desconhecido"
 
-                                # GRAVA O RELATÓRIO DO MOTIVO DE FILTRO DE CADA ARQUIVO
                                 linha_log = f"[{datetime.now().strftime('%d/%m/%Y %H:%M')}] Loja: {numloja.zfill(3)} | Sindicato: {codsind.zfill(4)} | Arquivo Salvo: {nome_arquivo_salvo} | Motivo: {motivo}\n"
                                 with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
                                     f.write(linha_log)
@@ -957,10 +965,21 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             browser.get('http://www3.mte.gov.br/sistemas/mediador/ConsultarInstColetivo')
             if _stop_flag: return
 
-    except Exception as e:
-        log_erro(
-            arquivo_log, f"Erro na função movimentacao_site: {str(e)}", cnpj, numloja)
-        print(f"Erro na função movimentacao_site: {str(e)}")
+    except Exception as e: # Mudança aqui
+        mensagem_erro = str(e)
+
+        print(f"Erro na função movimentacao_site: {mensagem_erro}")
+
+        contagem_anterior = _falhas_consecutivas.get(numloja, 0)
+        contagem_atual = contagem_anterior + 1
+        _falhas_consecutivas[numloja] = contagem_atual
+
+        if contagem_atual >= 2:
+            log_erro(arquivo_log, f"Erro persistente (após reinício do navegador): {mensagem_erro}", cnpj, numloja)
+        else:
+            print(f"Erro detectado (tentativa {contagem_atual}). Reiniciando navegador antes de tentar novamente...")
+
+        return "SESSION_DEAD"
 
 #############################################################################
 def criar_browser(download_dir):
@@ -970,10 +989,9 @@ def criar_browser(download_dir):
     chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_argument("--allow-running-insecure-content")
     #chrome_options.add_argument("--headless=new")
-     
+    chrome_options.add_argument("--disable-gpu") 
     chrome_options.add_argument("--window-position=-2400,-2400")
     chrome_options.add_argument("--window-size=1920,1080")
-
     chrome_options.add_argument("--disable-background-timer-throttling")
     chrome_options.add_argument("--disable-backgrounding-occluded-windows")
     chrome_options.add_argument("--disable-renderer-backgrounding")
@@ -1016,8 +1034,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         download_dir = os.path.join(mediador_dir, "Downloads")
         atrasados_dir = os.path.join(download_dir, "ATRASADOS")
         
-        # Criação do diretório de DEBUG
-        filtrados_debug_dir = os.path.join(download_dir, "FILTRADOS_DEBUG")
+        filtrados_debug_dir = os.path.join(download_dir, "FILTRADOS_DEBUG")  # Criação do diretório de DEBUG
         caminho_relatorio_filtros = os.path.join(filtrados_debug_dir, "Relatorio_Filtros_Reprovados.txt")
         
         pasta_log = os.path.join(mediador_dir, "Logs")
@@ -1032,8 +1049,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         os.makedirs(historico_dir, exist_ok=True)
         os.makedirs(pasta_log, exist_ok=True)
 
-        # Se o modo debug estiver ativo, coloca o cabeçalho temporal no relatório
-        if MODO_DEBUG_FILTRO:
+        if MODO_DEBUG_FILTRO:  # Se o modo debug estiver ativo, coloca o cabeçalho temporal no relatório
             os.makedirs(filtrados_debug_dir, exist_ok=True) # Garante que a pasta de filtrados existe
             with open(caminho_relatorio_filtros, "a", encoding="utf-8") as f:
                 f.write(f"\n=== NOVA EXECUÇÃO DE DEBUG: {datetime.now().strftime('%d/%m/%Y às %H:%M')} ===\n")
@@ -1054,7 +1070,6 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
     loja_final_para_iniciar = None
     iniciar_processamento_agora = not bool(loja_inicial)
 
-
     todas_as_lojas = []
     loja_inicial_num = None
 
@@ -1071,7 +1086,6 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 except (ValueError, TypeError):
                     continue
                 
-            
             todas_as_lojas = sorted(list(set(todas_as_lojas)))
             
             lojas_posteriores = [lj for lj in todas_as_lojas if lj >= loja_inicial_num]
@@ -1136,7 +1150,6 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 codsind = str(row[1])
                 numloja = str(row[0]) 
 
-                # NOVO CÁLCULO DE ATRASO (Dias exatos do calendário)
                 dias_de_atraso = 0
                 data_base_str = "Desconhecida"
                 
@@ -1144,7 +1157,6 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                     try:
                         valor_celula = row[7] # coluna H da planilha acompanhamentos tem a data-base (oitava coluna = row 7 pq a contagem começa do zero, 0 1 2 3 4 5 6 7)
                         
-                        # Converte a data dependendo do formato que vem do Excel
                         if isinstance(valor_celula, (int, float)):
                             data_base = pd.to_datetime(valor_celula, unit='D', origin='1899-12-30')
                         else:
@@ -1152,7 +1164,6 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                             
                         data_hoje = datetime.now()
                         
-                        # Zera as horas para a diferença dar o número exato de dias no calendário
                         data_base = data_base.replace(hour=0, minute=0, second=0, microsecond=0)
                         data_hoje = data_hoje.replace(hour=0, minute=0, second=0, microsecond=0)
                         
@@ -1183,8 +1194,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                     print(f"CNPJ ausente ou inválido, pulando: CNPJ lido: {cnpj}")
                     continue
 
-                # --- RESTART PERIÓDICO DO DRIVER ---
-                if contador_lojas_processadas > 0 and contador_lojas_processadas % RESTART_A_CADA == 0:
+                if contador_lojas_processadas > 0 and contador_lojas_processadas % RESTART_A_CADA == 0:  # Retart periódico do driver
                     print(f"\n>>> {contador_lojas_processadas} lojas processadas. Reiniciando o navegador para liberar memória... <<<\n")
                     try:
                         browser.quit()
@@ -1199,11 +1209,54 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                     except Exception as e_restart:
                         log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
                         break
-                # ---
+            
+                MAX_TENTATIVAS_LOJA = 3
+                tentativa_loja = 0
+                processado = False
+                erros_concecutivos = 0
 
-                # chama o selenium para o site
-                movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
+                while not processado and tentativa_loja < MAX_TENTATIVAS_LOJA:
+                    resultado = movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
+
+                    if resultado == "SESSION_DEAD":
+                        print(f"\n>>> Sessão do navegador perdida. reiniciando driver para retomar na loja {numloja}... <<<\n")
+                        try:
+                            browser.quit()
+                        except Exception as e_quit:
+                            print(f"Aviso ao fechar navegador antigo: {e_quit}")
+                        time.sleep(3)
+                        try:
+                            _browser_driver = criar_browser(download_dir)
+                            browser = _browser_driver
+                        except Exception as e_restart:
+                            log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
+                            break
+                        tentativa_loja += 1
+                        erros_concecutivos = 0
+                        continue
+
+                    elif resultado is False:
+                        erros_concecutivos += 1
+                        if erros_concecutivos >= 3:
+                            print(f"\n>>> {erros_concecutivos} erros seguidos. Reiniciando navegador preventivamente... <<<\n")
+                            try:
+                                browser.quit()
+                            except Exception as e_quit:
+                                print(f"Aviso ao fechar navegador antigo: {e_quit}")
+                            time.sleep(3)
+                            try:
+                                _browser_driver = criar_browser(download_dir)
+                                browser = _browser_driver
+                            except Exception as e_restart:
+                                log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
+                                break
+                            erros_concecutivos = 0
+                        processado = True
+                    else:
+                        erros_concecutivos = 0
+                        processado = True
                 contador_lojas_processadas += 1
+                _falhas_consecutivas.pop(numloja, None)
 
             if not _stop_flag:
                 print("Processamento concluído.")
