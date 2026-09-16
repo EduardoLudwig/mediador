@@ -21,6 +21,7 @@ import re
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import InvalidSessionIdException
 from selenium.common.exceptions import StaleElementReferenceException
+import subprocess
 
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboMediador")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
@@ -338,47 +339,126 @@ def subpasta_municipio(numloja, municipio, diretorio_base=None):
 
 ################################################################
 
+def verifica_office_instalado():
+
+    program_files = os.environ.get("PROGRAMFILES", "")
+    program_files_x86 = os.environ.get("PROGRAMFILES(X86)", "")
+
+    caminhos = [
+        os.path.join(program_files, "Microsoft Office", "Office16", "WINWORD.EXE"),
+        os.path.join(program_files, "Microsoft Office", "root", "Office16", "WINWORD.EXE"),
+        os.path.join(program_files_x86, "Microsoft Office", "Office16", "WINWORD.EXE"),
+        os.path.join(program_files_x86, "Microsoft Office", "root", "Office16", "WINWORD.EXE"),
+    ]
+
+    for caminho in caminhos:
+        if os.path.isfile(caminho):
+            return True
+    return False
+################################################################
+
+def encontra_libreoffice():
+    caminhos_comuns = [
+        os.path.join(os.environ.get("PROGRAMFILES", ""), "LibreOffice", "program", "soffice.exe"),
+        os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "LibreOffice", "program", "soffice.exe"),
+    ]
+    
+    for caminho in caminhos_comuns:
+        if os.path.isfile(caminho):
+            return caminho
+    
+    try:
+        resultado = subprocess.run(
+            ["where", "soffice.exe"],
+            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        if resultado.returncode == 0:
+            caminho = resultado.stdout.strip().split("\n")[0]
+            if os.path.isfile(caminho):
+                return caminho
+    except Exception:
+        pass
+    
+    return None
+
+################################################################
+
 def conversao_doc_para_pdf(caminho_doc, cnpj, numloja):
     if _stop_flag: return False
-    word = None
-    doc = None
-
-    try:
-        word = win32com.client.DispatchEx("Word.Application")
-        
-        word.Visible = False
-        word.DisplayAlerts = 0  
-        word.ScreenUpdating = False 
-
-        caminho_doc_absoluto = os.path.abspath(caminho_doc)
-        print(f"INFO: Convertendo em segundo plano (processo isolado): {caminho_doc_absoluto}")
-        doc = word.Documents.Open(FileName=caminho_doc_absoluto, ReadOnly=True, Visible=False)
-        
-        caminho_pdf = os.path.splitext(caminho_doc_absoluto)[0] + ".pdf"
-        doc.SaveAs(caminho_pdf, FileFormat=17)
-        
-        doc.Close(False)
+    caminho_doc_absoluto = os.path.abspath(caminho_doc)
+    caminho_pdf = os.path.splitext(caminho_doc_absoluto)[0] + ".pdf"
+    pasta_destino = os.path.dirname(caminho_doc_absoluto)
+    
+    # Verifica se Office está instalado antes de tentar Word COM
+    if verifica_office_instalado():
+        print(f"INFO: Microsoft Office detectado. Convertendo via Word...")
+        word = None
         doc = None
 
-        word.Quit()
-        word = None
+        try:
+            word = win32com.client.DispatchEx("Word.Application")
+            
+            word.Visible = False
+            word.DisplayAlerts = 0  
+            word.ScreenUpdating = False 
 
-        if os.path.exists(caminho_pdf) and os.path.exists(caminho_doc_absoluto):
-            os.remove(caminho_doc_absoluto)
-         
-        return True 
+            print(f"INFO: Convertendo em segundo plano (processo isolado): {caminho_doc_absoluto}")
+            doc = word.Documents.Open(FileName=caminho_doc_absoluto, ReadOnly=True, Visible=False)
+            
+            doc.SaveAs(caminho_pdf, FileFormat=17)
+            
+            doc.Close(False)
+            doc = None
 
-    except Exception as e:
-        if 'arquivo_log' in globals():
-            log_erro(arquivo_log, f"Erro ao converter DOC para PDF: {str(e)}", cnpj, numloja)
-        
-        if doc:
-            try: doc.Close(False)
-            except: pass
-        if word:
-            try: word.Quit()
-            except: pass
-        return False
+            word.Quit()
+            word = None
+
+            if os.path.exists(caminho_pdf) and os.path.exists(caminho_doc_absoluto):
+                os.remove(caminho_doc_absoluto)
+             
+            return True 
+
+        except Exception as e:
+            if 'arquivo_log' in globals():
+                log_erro(arquivo_log, f"Erro ao converter DOC para PDF via Word: {str(e)}", cnpj, numloja)
+            
+            if doc:
+                try: doc.Close(False)
+                except: pass
+            if word:
+                try: word.Quit()
+                except: pass
+            # Se Word falhou, continua para LibreOffice abaixo
+    
+    #Fallback tenta converter via LibreOffice
+    else:
+        print(f"INFO: Microsoft Office NÃO detectado.")
+    
+    print(f"INFO: Tentando conversão via LibreOffice...")
+    
+    caminho_soffice = encontra_libreoffice()
+    if caminho_soffice:
+        try:
+            resultado = subprocess.run(
+                [caminho_soffice, "--headless", "--convert-to", "pdf", "--outdir", pasta_destino, caminho_doc_absoluto],
+                capture_output=True, text=True, timeout=120,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            if resultado.returncode == 0 and os.path.exists(caminho_pdf):
+                print(f"INFO: Conversão via LibreOffice concluída com sucesso.")
+                if os.path.exists(caminho_doc_absoluto):
+                    os.remove(caminho_doc_absoluto)
+                return True
+            else:
+                print(f"ERRO: LibreOffice falhou: {resultado.stderr}")
+        except subprocess.TimeoutExpired:
+            print(f"ERRO: LibreOffice excedeu tempo limite de conversão.")
+        except Exception as e_liber:
+            print(f"ERRO: Falha na conversão via LibreOffice: {str(e_liber)}")
+    else:
+        print(f"ERRO: LibreOffice não encontrado. Instale o LibreOffice para converter DOC para PDF.")
+    
+    return False
 ################################################################  
 
 def aguardar_e_clicar(browser, xpath, tempo=30):
