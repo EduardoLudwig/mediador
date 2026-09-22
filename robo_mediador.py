@@ -27,6 +27,9 @@ from enviar_email import enviar_relatorio
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboMediador")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
 config_file_path = os.path.join(APP_CONFIG_DIR, "config.ini")
+# Pasta de logs que a limpeza pós-email NÃO apaga (fica fora da pasta de trabalho, junto do config.ini dentro da pasta .RoboMediador dentro do usuario no C)
+PASTA_LOG_PERMANENTE = os.path.join(APP_CONFIG_DIR, "Logs Permanentes")
+os.makedirs(PASTA_LOG_PERMANENTE, exist_ok=True)
 
 execucao_registrada = False
 caminho_log_hist = None
@@ -48,7 +51,7 @@ def stop_execution():
 def load_last_excel_path():
     config = configparser.ConfigParser()
     if os.path.exists(config_file_path):
-        config.read(config_file_path)
+        config.read(config_file_path, encoding='utf-8')
         if 'Settings' in config and 'LastExcelPath' in config['Settings']:
             return config['Settings']['LastExcelPath']
     return None
@@ -59,13 +62,13 @@ def save_last_excel_path(path):
     config = configparser.ConfigParser()
    
     if os.path.exists(config_file_path):
-        config.read(config_file_path)
+        config.read(config_file_path, encoding='utf-8')
 
     if 'Settings' not in config:
         config['Settings'] = {}
 
     config['Settings']['LastExcelPath'] = path
-    with open(config_file_path, 'w') as configfile:
+    with open(config_file_path, 'w', encoding='utf-8') as configfile:
         config.write(configfile)
 
 ################################################################
@@ -78,8 +81,11 @@ def log_erro(arquivo_log, mensagem, cnpj=None, numloja=None):
         f"{mensagem}\n"
         f"\n-------------------------------------------------\n\n"
     )
-    with open(arquivo_log, 'a', encoding='utf-8') as log:
-        log.write(layout_mensagem)
+    # Grava o erro em dois lugares: no Logs da pasta de trabalho (vai no email e é limpo depois) e no Logs Permanentes em ~/.RoboMediador, com o mesmo nome de arquivo (não é apagado pela limpeza pós-email, guarda os 30 mais recentes, serve para rastreabilidade)
+    arquivo_log_permanente = os.path.join(PASTA_LOG_PERMANENTE, os.path.basename(arquivo_log))
+    for caminho in (arquivo_log, arquivo_log_permanente):
+        with open(caminho, 'a', encoding='utf-8') as log:
+            log.write(layout_mensagem)
     print(layout_mensagem)
 
 ################################################################
@@ -108,7 +114,7 @@ def organizar_Log_erro(diretorio_log):
 def load_last_work_path():
     config = configparser.ConfigParser()
     if os.path.exists(config_file_path):
-        config.read(config_file_path)
+        config.read(config_file_path, encoding='utf-8')
         if 'Settings' in config and 'LastWorkPath' in config['Settings']:
             return config['Settings']['LastWorkPath']
     return None
@@ -118,11 +124,11 @@ def load_last_work_path():
 def save_last_work_path(path):
     config = configparser.ConfigParser()
     if os.path.exists(config_file_path):
-        config.read(config_file_path)
+        config.read(config_file_path, encoding='utf-8')
     if 'Settings' not in config:
         config['Settings'] = {}
     config['Settings']['LastWorkPath'] = path
-    with open(config_file_path, 'w') as configfile:
+    with open(config_file_path, 'w', encoding='utf-8') as configfile:
         config.write(configfile)
 
 ################################################################
@@ -158,9 +164,10 @@ def primeira_letra(palavra):
 
 ################################################################
 
-def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, usar_pasta_municipio=False, is_debug=False):
-    if _stop_flag: return False
-    max_tentativas = 3
+def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, arquivos_antes, usar_pasta_municipio=False, is_debug=False):
+    if _stop_flag: return False, None, None
+    # Às vezes o site demora pra entregar o arquivo, por isso 10 tentativas (~40s de espera)
+    max_tentativas = 10
     tentativa = 0
     
     if cidade_sind: 
@@ -177,10 +184,14 @@ def renomear_arquivo_baixado(codsind, municipio, cidade_sind, cnpj, numloja, usa
     pasta_municipio_para_retorno = None 
     
     while tentativa < max_tentativas:
-        if _stop_flag: return False
-        time.sleep(3)  
-        
-        list_of_files = glob.glob(os.path.join(download_dir, "*.doc"))
+        if _stop_flag: return False, None, None
+        time.sleep(3)
+
+        # Só considera arquivos que NÃO estavam na pasta antes do clique. Sem isso, se o download de uma loja atrasasse, o arquivo dela chegava depois e era renomeado com o nome da loja seguinte
+        list_of_files = [
+            arquivo for arquivo in glob.glob(os.path.join(download_dir, "*.doc"))
+            if arquivo not in arquivos_antes
+        ]
         
         if not list_of_files:
             print(f"Nenhum arquivo DOC encontrado (tentativa {tentativa + 1}/{max_tentativas})")
@@ -655,8 +666,6 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
             aguardar_e_clicar(browser, '//*[@id="btnLimpar"]')
             aguardar_e_clicar(browser, '/html/body/div[5]/div[3]/div/button[1]/span')
 
-            print(f"Registrando loja sem documento: {numloja}")
-            registrar_sem_doc(numloja, cnpj, municipio, codsind)
             if _stop_flag: return
             return
         
@@ -778,6 +787,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 pular_este_arquivo = True
                                 motivo_reprovacao = "Falha no carregamento da página (Timeout ou Vazia)"
 
+                            # IDEIA: mover palavras_filtro e excecoes_lojas para um arquivo JSON ao lado do executável, assim dá pra editar as listas sem precisar gerar um novo .exe a cada mudança
                             palavras_filtro = [
                                 "rodoviária", "rodov", "peix", "peixarias", "rodoviarias", "farmacêuticos",
 
@@ -921,6 +931,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
 
                         except Exception as e_map:
                             print(f"Erro ao mapear o arquivo {i+1}: {e_map}")
+                            log_erro(arquivo_log, f"Erro ao mapear o documento {i+1}, ele NÃO foi baixado: {str(e_map)}", cnpj, numloja)
                             browser.switch_to.window(original_window) 
                             break # Sai do while em caso de erro crítico que não seja o WAF
 
@@ -948,6 +959,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
 
                             browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
                             time.sleep(1.5)
+                            arquivos_antes = set(glob.glob(os.path.join(download_dir, "*.doc"))) # "foto" da pasta antes do clique
                             browser.execute_script("arguments[0].click();", botao_clique_real)
 
                             print(f"Baixando documento ({contador_baixados}/{qtd_aprovados}) ...")
@@ -968,7 +980,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 municipio, 
                                 cidade_sind, 
                                 cnpj,
-                                f"{numloja}__{contador_baixados}" if usar_pasta_municipio_na_chamada else numloja, 
+                                f"{numloja}__{contador_baixados}" if usar_pasta_municipio_na_chamada else numloja,
+                                arquivos_antes,
                                 usar_pasta_municipio=usar_pasta_municipio_na_chamada
                             )
                             
@@ -1025,6 +1038,7 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                             botao_clique_real = botoes_atuais[index_real]
                             browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_clique_real)
                             time.sleep(1.5)
+                            arquivos_antes = set(glob.glob(os.path.join(download_dir, "*.doc"))) # "foto" da pasta antes do clique
                             browser.execute_script("arguments[0].click();", botao_clique_real)
 
                             print(f"Baixando documento REPROVADO ({contador_debug}/{len(documentos_reprovados)}) ...")
@@ -1045,7 +1059,8 @@ def movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, co
                                 municipio, 
                                 cidade_sind, 
                                 cnpj,
-                                f"{numloja}___filtrado_{contador_debug}" if usar_pasta_debug else f"{numloja}__filtrado", 
+                                f"{numloja}___filtrado_{contador_debug}" if usar_pasta_debug else f"{numloja}__filtrado",
+                                arquivos_antes,
                                 usar_pasta_municipio=usar_pasta_debug,
                                 is_debug=True 
                             )
@@ -1121,21 +1136,16 @@ def criar_browser(download_dir):
 #############################################################################
 
 def limpar_diretorio(diretorio):
-    try:
-        for item in os.listdir(diretorio):
-            caminho = os.path.join(diretorio, item)
+    # Apaga só as pastas que o próprio robô cria, o resto da pasta de trabalho fica intacto (dessa forma podemos manter um log permanente de todas as rotinas)
+    pastas_do_robo = ["Downloads", "Histórico", "Logs"]
+    for nome in pastas_do_robo:
+        caminho = os.path.join(diretorio, nome)
+        if os.path.isdir(caminho):
             try:
-                if os.path.isfile(caminho) or os.path.islink(caminho):
-                    os.remove(caminho)
-                    print(f"[LIMPEZA] Arquivo removido: {item}")
-                elif os.path.isdir(caminho):
-                    shutil.rmtree(caminho)
-                    print(f"[LIMPEZA] Pasta removida: {item}")
+                shutil.rmtree(caminho)
+                print(f"[LIMPEZA] Pasta removida: {nome}")
             except Exception as e:
-                print(f"[LIMPEZA] Erro ao remover '{item}': {e}")
-        print("[LIMPEZA] Diretório limpo com sucesso.")
-    except Exception as e:
-        print(f"[LIMPEZA] Erro ao limpar diretório: {e}")
+                print(f"[LIMPEZA] Erro ao remover '{nome}': {e}")
 
 #############################################################################
 
@@ -1166,7 +1176,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         pasta_log = os.path.join(mediador_dir, "Logs")
         timestamp_sessao = datetime.now().strftime("%d-%m-%Y_%H-%M")
         arquivo_log = os.path.join(pasta_log, f"Log Erros_{timestamp_sessao}.txt")
-        diretorio_log = os.path.dirname(arquivo_log)     
+        diretorio_log = os.path.dirname(arquivo_log)
         caminho_log_hist = None
         #LOG DIRETORIO HISTÓRICO
         os.makedirs(diretorio_log, exist_ok=True)
@@ -1174,6 +1184,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
         os.makedirs(atrasados_dir, exist_ok=True)
         os.makedirs(historico_dir, exist_ok=True)
         os.makedirs(pasta_log, exist_ok=True)
+        organizar_Log_erro(PASTA_LOG_PERMANENTE) # mantém só os 30 logs mais recentes no Logs Permanentes
 
         if MODO_DEBUG_FILTRO:  # Se o modo debug estiver ativo, coloca o cabeçalho temporal no relatório
             os.makedirs(filtrados_debug_dir, exist_ok=True) # Garante que a pasta de filtrados existe
@@ -1257,7 +1268,8 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                     print("Execução interrompida pela interface.")
                     break
                 
-                numloja_atual = str(row[0])
+                # padroniza para evitar o pandas trasnformar em decimal
+                numloja_atual = str(int(row[0]))
                 if not iniciar_processamento_agora:
                     if numloja_atual == str(loja_final_para_iniciar):
                         print(f"--- Loja alvo '{loja_final_para_iniciar}' encontrada. Iniciando processamento. ---")
@@ -1274,7 +1286,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 municipio = str(row[5])
                 cidade_sind = str(row[9])
                 codsind = str(row[1])
-                numloja = str(row[0]) 
+                numloja = numloja_atual
 
                 sind_bruto = codsind.strip()
                 if sind_bruto.upper() == "FECHADA":
@@ -1343,13 +1355,13 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                         _browser_driver = criar_browser(download_dir)
                         browser = _browser_driver
                     except Exception as e_restart:
-                        log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
-                        break
-            
+                        # Sem navegador não tem como continuar, encerra a execução (o finally lá embaixo ainda roda)
+                        log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador, execução encerrada: {str(e_restart)}")
+                        return
+
                 MAX_TENTATIVAS_LOJA = 3
                 tentativa_loja = 0
                 processado = False
-                erros_concecutivos = 0
 
                 while not processado and tentativa_loja < MAX_TENTATIVAS_LOJA:
                     resultado = movimentacao_site(cnpj, browser, uf, municipio, primeira_letra_municipio, codsind, numloja, cidade_sind, dias_de_atraso)
@@ -1365,42 +1377,28 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                             _browser_driver = criar_browser(download_dir)
                             browser = _browser_driver
                         except Exception as e_restart:
-                            log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
-                            break
+                            # Sem navegador não tem como continuar, encerra a execução (o finally lá embaixo ainda roda)
+                            log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador, execução encerrada: {str(e_restart)}")
+                            return
                         tentativa_loja += 1
-                        erros_concecutivos = 0
-                        continue
-
-                    elif resultado is False:
-                        erros_concecutivos += 1
-                        if erros_concecutivos >= 3:
-                            print(f"\n>>> {erros_concecutivos} erros seguidos. Reiniciando navegador preventivamente... <<<\n")
-                            try:
-                                browser.quit()
-                            except Exception as e_quit:
-                                print(f"Aviso ao fechar navegador antigo: {e_quit}")
-                            time.sleep(3)
-                            try:
-                                _browser_driver = criar_browser(download_dir)
-                                browser = _browser_driver
-                            except Exception as e_restart:
-                                log_erro(arquivo_log, f"Erro crítico ao reiniciar o navegador: {str(e_restart)}")
-                                break
-                            erros_concecutivos = 0
-                        processado = True
                     else:
-                        erros_concecutivos = 0
                         processado = True
+
+                # Se a loja deu erro nas 3 tentativas, registra no histórico pra ela não sumir sem deixar rastro
+                if not processado:
+                    registrar_loja_pulada(numloja, cnpj, municipio, codsind, f"Erro após {MAX_TENTATIVAS_LOJA} tentativas - foi pulada")
+
                 contador_lojas_processadas += 1
                 _falhas_consecutivas.pop(numloja, None)
 
             if not _stop_flag:
                 print("Processamento concluído.")
                 email_enviado = False
+                arquivo_log_permanente = os.path.join(PASTA_LOG_PERMANENTE, os.path.basename(arquivo_log))
                 try:
-                    email_enviado = enviar_relatorio(mediador_dir, data_execucao)
+                    email_enviado = enviar_relatorio(mediador_dir, data_execucao, arquivo_log_permanente)
                 except Exception as e_email:
-                    print(f"Erro ao enviar relatório por email: {e_email}")
+                    log_erro(arquivo_log, f"Erro ao enviar relatório por email: {e_email}")
 
                 if email_enviado:
                     limpar_diretorio(mediador_dir)
