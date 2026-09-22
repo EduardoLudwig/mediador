@@ -4,7 +4,8 @@ import threading
 import sys
 import os
 import pythoncom
-from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path
+from robo_mediador import main, stop_execution, load_last_work_path, save_last_work_path, load_last_excel_path, save_last_excel_path, limpar_diretorio
+from enviar_email import enviar_relatorio
 
 def resource_path(relative_path):
     try:
@@ -283,4 +284,26 @@ if __name__ == "__main__":
     root = ctk.CTk()
     should_auto_start = '--auto-start' in sys.argv
     app = App(root, auto_start=should_auto_start)
+
+    # TEMPORÁRIO: teste do envio de email. REMOVER DEPOIS 
+    TESTE_EMAIL = True
+    if TESTE_EMAIL:
+        if app.caminho_download:
+            def _executar_teste_email():
+                try:
+                    email_enviado = enviar_relatorio(app.caminho_download)
+                    if email_enviado:
+                        limpar_diretorio(app.caminho_download)
+                        print("[TESTE EMAIL] Email enviado e diretório limpo.")
+                        root.after(0, root.destroy)
+                    else:
+                        print("[TESTE EMAIL] Falha no envio. Diretório NÃO limpo. Verifique config.ini.")
+                except Exception as e:
+                    print(f"[TESTE EMAIL] Erro: {e}")
+
+            threading.Thread(target=_executar_teste_email).start()
+        else:
+            print("[TESTE EMAIL] Nenhuma pasta de trabalho salva. Selecione uma e abra de novo.")
+    #############################################################
+
     root.mainloop()

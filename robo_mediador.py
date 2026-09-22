@@ -22,6 +22,7 @@ from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import InvalidSessionIdException
 from selenium.common.exceptions import StaleElementReferenceException
 import subprocess
+from enviar_email import enviar_relatorio
 
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboMediador")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
@@ -430,7 +431,7 @@ def conversao_doc_para_pdf(caminho_doc, cnpj, numloja):
                 except: pass
             # Se Word falhou, continua para LibreOffice abaixo
     
-    #Fallback tenta converter via LibreOffice
+    # Fallback tenta converter via LibreOffice
     else:
         print(f"INFO: Microsoft Office NÃO detectado.")
     
@@ -1094,6 +1095,25 @@ def criar_browser(download_dir):
     return driver
 #############################################################################
 
+def limpar_diretorio(diretorio):
+    try:
+        for item in os.listdir(diretorio):
+            caminho = os.path.join(diretorio, item)
+            try:
+                if os.path.isfile(caminho) or os.path.islink(caminho):
+                    os.remove(caminho)
+                    print(f"[LIMPEZA] Arquivo removido: {item}")
+                elif os.path.isdir(caminho):
+                    shutil.rmtree(caminho)
+                    print(f"[LIMPEZA] Pasta removida: {item}")
+            except Exception as e:
+                print(f"[LIMPEZA] Erro ao remover '{item}': {e}")
+        print("[LIMPEZA] Diretório limpo com sucesso.")
+    except Exception as e:
+        print(f"[LIMPEZA] Erro ao limpar diretório: {e}")
+
+#############################################################################
+
 def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_callback=None): #  parte principal do código
     global _stop_flag, _browser_driver
     global mediador_dir, historico_dir, download_dir, atrasados_dir
@@ -1340,6 +1360,16 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
 
             if not _stop_flag:
                 print("Processamento concluído.")
+                email_enviado = False
+                try:
+                    email_enviado = enviar_relatorio(mediador_dir)
+                except Exception as e_email:
+                    print(f"Erro ao enviar relatório por email: {e_email}")
+
+                if email_enviado:
+                    limpar_diretorio(mediador_dir)
+                else:
+                    print("[LIMPEZA] Email não enviado. Diretório NÃO limpo.")
 
         except Exception as e:
             log_erro(arquivo_log, f"Ocorreu um erro na execução principal: {str(e)}", cnpj=locals().get('cnpj'))
