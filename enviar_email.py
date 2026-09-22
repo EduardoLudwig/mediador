@@ -30,12 +30,21 @@ def carregar_config_email():
     email_cfg = config["Email"]
     remetente = email_cfg.get("EmailRemetente", "")
     senha = email_cfg.get("SenhaApp", "")
-    destinatario = email_cfg.get("EmailDestinatario", "")
+    destinatarios_raw = email_cfg.get("EmailDestinatario", "")
 
-    if not remetente or not senha or not destinatario:
+    if not remetente or not senha or not destinatarios_raw:
         raise ValueError("Configuração de email incompleta. Verifique EmailRemetente, SenhaApp e EmailDestinatario no config.ini")
 
-    return remetente, senha, destinatario
+    destinatarios = [
+        email.strip()
+        for email in destinatarios_raw.replace(",", ";").split(";")
+        if email.strip()
+    ]
+
+    if not destinatarios:
+        raise ValueError("EmailDestinatario vazio ou inválido no config.ini. Separe múltiplos emails por ponto e vírgula (;) ou vírgula (,).")
+
+    return remetente, senha, destinatarios
 
 ################################################################
 
@@ -46,7 +55,7 @@ def contar_arquivos_download(diretorio_downloads):
 
 ################################################################
 
-def compactar_pasta_7z(pasta_origem):
+def compactar_pasta_7z(pasta_origem, data_execucao=None):
     pasta_origem = os.path.normpath(pasta_origem)
 
     if not os.path.isfile(SEVENZIP_PATH):
@@ -55,8 +64,8 @@ def compactar_pasta_7z(pasta_origem):
             "Instale o 7-Zip: https://www.7-zip.org/"
         )
 
-    data_atual = datetime.now()
-    nome_arquivo = f"leitura_mediador_{data_atual.strftime('%d-%m-%Y')}.7z"
+    data_ref = data_execucao if data_execucao else datetime.now()
+    nome_arquivo = f"leitura_mediador_{data_ref.strftime('%d-%m-%Y')}.7z"
     pasta_pai = os.path.dirname(pasta_origem)
     caminho_7z = os.path.join(pasta_pai, nome_arquivo)
 
@@ -89,25 +98,31 @@ def compactar_pasta_7z(pasta_origem):
 
 ################################################################
 
-def enviar_relatorio(mediador_dir):
+def enviar_relatorio(mediador_dir, data_execucao=None):
     try:
-        remetente, senha, destinatario = carregar_config_email() # devolve tupla de 3 elementos
+        remetente, senha, destinatarios = carregar_config_email() # devolve tupla de 3 elementos
     except (FileNotFoundError, KeyError, ValueError) as e: # cobre cenários de falha
         print(f"[EMAIL] Erro ao carregar configuração: {e}")
         return False
 
-    diretorio_downloads = os.path.join(mediador_dir, "Downloads")
-    if os.path.isdir(diretorio_downloads):
-        qtd_arquivos = contar_arquivos_download(diretorio_downloads)
-    else:
-        print(f"[EMAIL] Pasta Downloads não encontrada, contagem de arquivos será 0.")
-        qtd_arquivos = 0
-    data_atual = datetime.now()
-    data_formatada = data_atual.strftime("%d/%m/%Y")
+    pastas_obrigatorias = {
+        "Downloads": os.path.join(mediador_dir, "Downloads"),
+        "Histórico": os.path.join(mediador_dir, "Histórico"),
+        "Logs": os.path.join(mediador_dir, "Logs"),
+    }
+    for nome_pasta, caminho_pasta in pastas_obrigatorias.items():
+        if not os.path.isdir(caminho_pasta):
+            print(f"[EMAIL] Pasta obrigatória '{nome_pasta}' não encontrada em {caminho_pasta}. Email NÃO enviado.")
+            return False
+
+    diretorio_downloads = pastas_obrigatorias["Downloads"]
+    qtd_arquivos = contar_arquivos_download(diretorio_downloads)
+    data_ref = data_execucao if data_execucao else datetime.now()
+    data_formatada = data_ref.strftime("%d/%m/%Y")
 
     print("[EMAIL] Compactando pasta de leitura...")
     try:
-        caminho_7z = compactar_pasta_7z(mediador_dir)
+        caminho_7z = compactar_pasta_7z(mediador_dir, data_ref)
     except Exception as e:
         print(f"[EMAIL] Erro ao compactar: {e}")
         return False
@@ -122,7 +137,7 @@ def enviar_relatorio(mediador_dir):
 
     msg = MIMEMultipart() # mensagem com corpo de texto + anexo. sem multipart teria só um dos dois
     msg["From"] = remetente
-    msg["To"] = destinatario
+    msg["To"] = ", ".join(destinatarios)
     msg["Subject"] = f"Relatório Robô Mediador - {data_formatada}"
 
     corpo = (
@@ -155,8 +170,8 @@ def enviar_relatorio(mediador_dir):
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=TIMEOUT_SMTP) as servidor:
             servidor.starttls()
             servidor.login(remetente, senha)
-            servidor.sendmail(remetente, destinatario, msg.as_string())
-        print(f"[EMAIL] Email enviado com sucesso para {destinatario}")
+            servidor.sendmail(remetente, destinatarios, msg.as_string())
+        print(f"[EMAIL] Email enviado com sucesso para {', '.join(destinatarios)}")
         _limpar_arquivo(caminho_7z)
         return True
     except smtplib.SMTPAuthenticationError:

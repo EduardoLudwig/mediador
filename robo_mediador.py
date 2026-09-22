@@ -327,6 +327,31 @@ def registrar_sem_doc(numloja, cnpj, municipio, codsind):
 
 ################################################################
 
+def registrar_loja_pulada(numloja, cnpj, municipio, codsind, motivo):
+    try:
+        registrar_ultimo_historico()
+
+        data_atual = datetime.now().strftime("%d/%m/%Y às %H:%M")
+        linha = f"Loja: {numloja} | Código do sindicato: {codsind} | CNPJ: {cnpj} | Município: {municipio} | {motivo} em: {data_atual}\n"
+
+        if os.path.exists(caminho_log_hist):
+            with open(caminho_log_hist, "r", encoding="utf-8") as arquivo:
+                conteudo = arquivo.readlines()
+        else:
+            conteudo = []
+
+        conteudo.append(linha)
+
+        with open(caminho_log_hist, "w", encoding="utf-8") as arquivo:
+            arquivo.writelines(conteudo)
+
+        print("Loja pulada registrada no .txt")
+
+    except Exception as erro_txt:
+        print(f"Erro ao registrar loja pulada no txt: {erro_txt}")
+
+################################################################
+
 def subpasta_municipio(numloja, municipio, diretorio_base=None):
     if diretorio_base is None:
         diretorio_base = download_dir
@@ -1126,6 +1151,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
 
     _stop_flag = False
     _browser_driver = None
+    data_execucao = datetime.now()
 
     if base_path_param:
         print(f"Diretório de trabalho definido pela interface: {base_path_param}")
@@ -1250,6 +1276,16 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 codsind = str(row[1])
                 numloja = str(row[0]) 
 
+                sind_bruto = codsind.strip()
+                if sind_bruto.upper() == "FECHADA":
+                    registrar_loja_pulada(numloja, cnpj, municipio, codsind, "Loja fechada - foi pulada")
+                    print(f"[STATUS] Loja {numloja} fechada (CÓD. SIND='{codsind}'). Pulada.")
+                    continue
+                if not sind_bruto or sind_bruto.lower() in ("nan", "none"):
+                    registrar_loja_pulada(numloja, cnpj, municipio, "não informado", "Código do sindicato não informado - foi pulada")
+                    print(f"[STATUS] Loja {numloja} sem código de sindicato. Pulada.")
+                    continue 
+
                 dias_de_atraso = 0
                 data_base_str = "Desconhecida"
                 
@@ -1362,7 +1398,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 print("Processamento concluído.")
                 email_enviado = False
                 try:
-                    email_enviado = enviar_relatorio(mediador_dir)
+                    email_enviado = enviar_relatorio(mediador_dir, data_execucao)
                 except Exception as e_email:
                     print(f"Erro ao enviar relatório por email: {e_email}")
 

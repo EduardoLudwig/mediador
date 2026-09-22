@@ -286,7 +286,7 @@ if __name__ == "__main__":
     app = App(root, auto_start=should_auto_start)
 
     # TEMPORÁRIO: teste do envio de email. REMOVER DEPOIS 
-    TESTE_EMAIL = True
+    """"TESTE_EMAIL = True
     if TESTE_EMAIL:
         if app.caminho_download:
             def _executar_teste_email():
@@ -304,6 +304,6 @@ if __name__ == "__main__":
             threading.Thread(target=_executar_teste_email).start()
         else:
             print("[TESTE EMAIL] Nenhuma pasta de trabalho salva. Selecione uma e abra de novo.")
-    #############################################################
+    #############################################################"""""
 
     root.mainloop()
