@@ -230,8 +230,9 @@ class App:
             main(self.caminho_arquivo, base_path_param=download_path, loja_inicial=loja_inicial, update_callback=update_callback) 
             self.status.configure(text="Processo concluído com sucesso.")
             self.processing_store_label.configure(text="")
+            self.root.after(4000, self.root.destroy)
         except Exception as e:
-            messagebox.showerror("Erro", f"Ocorreu um erro: {str(e)}")
+            self.root.after(0, lambda: messagebox.showerror("Erro", f"Ocorreu um erro: {str(e)}"))
             self.status.configure(text="Erro durante a execução.")
             self.processing_store_label.configure(text="")
         finally:
@@ -307,3 +308,4 @@ if __name__ == "__main__":
     #############################################################"""""
 
     root.mainloop()
+    sys.exit()
