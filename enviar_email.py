@@ -9,7 +9,8 @@ from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+# Mesmo config.ini que o robô usa. Não dá pra usar a pasta do __file__ porque no .exe (--onefile) ela aponta pra uma pasta temporária que o PyInstaller cria ao abrir o programa, por isso funcionava rodando no vscode mas no .exe
+CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".RoboMediador", "config.ini")
 SEVENZIP_PATH = r"C:\Program Files\7-Zip\7z.exe"
 LIMITE_ANEXO_MB = 18
 TIMEOUT_SMTP = 180
@@ -98,11 +99,27 @@ def compactar_pasta_7z(pasta_origem, data_execucao=None):
 
 ################################################################
 
-def enviar_relatorio(mediador_dir, data_execucao=None):
+def _log_erro_email(arquivo_log, mensagem):
+    # anota erros no log permanente, serve para rastreabilidade
+    data_log = datetime.now().strftime("%d-%m-%Y_%H-%M")
+    layout_mensagem = (
+        f"Erro na data: {data_log}\n"
+        f"ENVIO DE EMAIL\n\n"
+        f"{mensagem}\n"
+        f"\n-------------------------------------------------\n\n"
+    )
+    print(layout_mensagem)
+    if arquivo_log:
+        with open(arquivo_log, "a", encoding="utf-8") as log:
+            log.write(layout_mensagem)
+
+################################################################
+
+def enviar_relatorio(mediador_dir, data_execucao=None, arquivo_log=None):
     try:
         remetente, senha, destinatarios = carregar_config_email() # devolve tupla de 3 elementos
     except (FileNotFoundError, KeyError, ValueError) as e: # cobre cenários de falha
-        print(f"[EMAIL] Erro ao carregar configuração: {e}")
+        _log_erro_email(arquivo_log, f"[EMAIL] Erro ao carregar configuração: {e}")
         return False
 
     pastas_obrigatorias = {
@@ -112,7 +129,7 @@ def enviar_relatorio(mediador_dir, data_execucao=None):
     }
     for nome_pasta, caminho_pasta in pastas_obrigatorias.items():
         if not os.path.isdir(caminho_pasta):
-            print(f"[EMAIL] Pasta obrigatória '{nome_pasta}' não encontrada em {caminho_pasta}. Email NÃO enviado.")
+            _log_erro_email(arquivo_log, f"[EMAIL] Pasta obrigatória '{nome_pasta}' não encontrada em {caminho_pasta}. Email NÃO enviado.")
             return False
 
     diretorio_downloads = pastas_obrigatorias["Downloads"]
@@ -124,14 +141,14 @@ def enviar_relatorio(mediador_dir, data_execucao=None):
     try:
         caminho_7z = compactar_pasta_7z(mediador_dir, data_ref)
     except Exception as e:
-        print(f"[EMAIL] Erro ao compactar: {e}")
+        _log_erro_email(arquivo_log, f"[EMAIL] Erro ao compactar: {e}")
         return False
 
     print("[EMAIL] Preparando envio do email...")
 
     tamanho_mb = os.path.getsize(caminho_7z) / (1024 * 1024)
     if tamanho_mb > LIMITE_ANEXO_MB:
-        print(f"[EMAIL] Arquivo de {tamanho_mb:.1f} MB excede o limite de {LIMITE_ANEXO_MB} MB. Email não enviado.")
+        _log_erro_email(arquivo_log, f"[EMAIL] Arquivo de {tamanho_mb:.1f} MB excede o limite de {LIMITE_ANEXO_MB} MB. Email não enviado.")
         _limpar_arquivo(caminho_7z)
         return False
 
@@ -162,7 +179,7 @@ def enviar_relatorio(mediador_dir, data_execucao=None):
             )
             msg.attach(parte)
     except Exception as e:
-        print(f"[EMAIL] Erro ao ler arquivo 7z para anexo: {e}")
+        _log_erro_email(arquivo_log, f"[EMAIL] Erro ao ler arquivo 7z para anexo: {e}")
         _limpar_arquivo(caminho_7z)
         return False
 
@@ -175,11 +192,11 @@ def enviar_relatorio(mediador_dir, data_execucao=None):
         _limpar_arquivo(caminho_7z)
         return True
     except smtplib.SMTPAuthenticationError:
-        print("[EMAIL] Erro de autenticação. Verifique o email e a senha de app no config.ini")
+        _log_erro_email(arquivo_log, "[EMAIL] Erro de autenticação. Verifique o email e a senha de app no config.ini")
         _limpar_arquivo(caminho_7z)
         return False
     except Exception as e:
-        print(f"[EMAIL] Erro ao enviar email: {e}")
+        _log_erro_email(arquivo_log, f"[EMAIL] Erro ao enviar email: {e}")
         _limpar_arquivo(caminho_7z)
         return False
 
