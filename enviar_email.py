@@ -18,6 +18,35 @@ TIMEOUT_7Z = 1800
 
 ################################################################
 
+def load_last_email_config():
+    config = configparser.ConfigParser()
+    if not os.path.exists(CONFIG_PATH):
+        return None
+
+    config.read(CONFIG_PATH, encoding="utf-8")
+
+    if "Email" not in config:
+        return None
+
+    email_cfg = config["Email"]
+    remetente = email_cfg.get("EmailRemetente", "")
+    senha = email_cfg.get("SenhaApp", "")
+    destinatarios_raw = email_cfg.get("EmailDestinatario", "")
+
+    destinatarios = [
+        email.strip()
+        for email in destinatarios_raw.replace(",", ";").split(";")
+        if email.strip()
+    ]
+
+    return {
+        "remetente": remetente,
+        "senha": senha,
+        "destinatarios": destinatarios,
+    }
+
+################################################################
+
 def carregar_config_email():
     config = configparser.ConfigParser()
     if not os.path.exists(CONFIG_PATH):

@@ -31,6 +31,40 @@ config_file_path = os.path.join(APP_CONFIG_DIR, "config.ini")
 PASTA_LOG_PERMANENTE = os.path.join(APP_CONFIG_DIR, "Logs Permanentes")
 os.makedirs(PASTA_LOG_PERMANENTE, exist_ok=True)
 
+################################################################
+
+def garantir_config_inicial():
+    # Cria o config.ini automaticamente na primeira execução (sem precisar selecionar nada na interface),
+    # já com as seções [Settings] e [Email] definidas. Se o arquivo já existir, NÃO sobrescreve nada:
+    # preserva os valores preenchidos manualmente e só adiciona o que estiver faltando (ex.: a seção [Email]).
+    config = configparser.ConfigParser()
+    alterado = False
+
+    if os.path.exists(config_file_path):
+        config.read(config_file_path, encoding='utf-8')
+
+    if 'Settings' not in config:
+        config['Settings'] = {}
+        alterado = True
+
+    if 'Email' not in config:
+        config['Email'] = {}
+        alterado = True
+
+    email_cfg = config['Email']
+    for chave in ('EmailRemetente', 'SenhaApp', 'EmailDestinatario'):
+        if chave not in email_cfg:
+            email_cfg[chave] = ''
+            alterado = True
+
+    if alterado:
+        with open(config_file_path, 'w', encoding='utf-8') as configfile:
+            config.write(configfile)
+
+################################################################
+
+garantir_config_inicial()
+
 execucao_registrada = False
 caminho_log_hist = None
 _falhas_consecutivas = {}
