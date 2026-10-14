@@ -1,0 +1,11 @@
+pyinstaller --console --noconfirm --clean --onefile --windowed `
+  --name "Robô Mediador V3" `
+  --icon "mediador_icon.ico" `
+  --hidden-import pythoncom `
+  --hidden-import win32com.client `
+  --hidden-import customtkinter `
+  --collect-all customtkinter `
+  --collect-data customtkinter `
+  --collect-all selenium `
+  --collect-all webdriver_manager interface_mediador.py
+
