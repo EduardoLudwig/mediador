@@ -128,6 +128,36 @@ def compactar_pasta_7z(pasta_origem, data_execucao=None):
 
 ################################################################
 
+def montar_corpo_html(qtd_arquivos, data_ref):
+    # Corpo do email em HTML: só o resumo. A leitura completa vai no .7z em anexo.
+    # Os estilos vão dentro de cada tag (style="...") porque os programas de email ignoram CSS separado
+    verde = "#1C5A24"  # mesmo verde da interface do robô
+
+    estilo_texto = "padding: 10px 0; border-bottom: 1px solid #eeeeee; font-size: 15px;"
+    estilo_numero = "padding: 10px 0; border-bottom: 1px solid #eeeeee; font-size: 20px; font-weight: bold; text-align: right;"
+
+    return f"""
+<div style="font-family: Arial, sans-serif; max-width: 560px; border: 1px solid #dddddd;">
+  <div style="background-color: {verde}; color: #ffffff; padding: 18px 24px;">
+    <div style="font-size: 20px; font-weight: bold;">Relatório do Robô Mediador</div>
+    <div style="font-size: 14px;">Leitura de {data_ref.strftime('%d/%m/%Y')}</div>
+  </div>
+  <div style="padding: 20px 24px; color: #333333;">
+    <p style="font-size: 15px;">Olá,</p>
+    <p style="font-size: 15px;">Segue em anexo a leitura completa do Robô Mediador.</p>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="{estilo_texto}">Arquivos baixados</td>
+        <td style="{estilo_numero} color: {verde};">{qtd_arquivos}</td>
+      </tr>
+    </table>
+    <p style="font-size: 15px; margin-top: 24px;">Att,<br>Robô Mediador</p>
+  </div>
+</div>
+"""
+
+################################################################
+
 def _log_erro_email(arquivo_log, mensagem):
     # anota erros no log permanente, serve para rastreabilidade
     data_log = datetime.now().strftime("%d-%m-%Y_%H-%M")
@@ -186,15 +216,9 @@ def enviar_relatorio(mediador_dir, data_execucao=None, arquivo_log=None):
     msg["To"] = ", ".join(destinatarios)
     msg["Subject"] = f"Relatório Robô Mediador - {data_formatada}"
 
-    corpo = (
-        "Olá,\n\n"
-        "Segue em anexo a leitura completa do Robô Mediador.\n\n"
-        f"Data da leitura: {data_formatada}\n"
-        f"Quantidade de arquivos baixados: {qtd_arquivos}\n\n"
-        "Att,\nRobô Mediador"
-    )
+    corpo = montar_corpo_html(qtd_arquivos, data_ref)
 
-    msg.attach(MIMEText(corpo, "plain", "utf-8"))
+    msg.attach(MIMEText(corpo, "html", "utf-8"))
 
     try:
         with open(caminho_7z, "rb") as f:
