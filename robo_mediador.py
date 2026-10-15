@@ -1430,7 +1430,7 @@ def main(caminho_excel=None, base_path_param=None, loja_inicial=None, update_cal
                 email_enviado = False
                 arquivo_log_permanente = os.path.join(PASTA_LOG_PERMANENTE, os.path.basename(arquivo_log))
                 try:
-                    email_enviado = enviar_relatorio(mediador_dir, data_execucao, arquivo_log_permanente)
+                    email_enviado = enviar_relatorio(mediador_dir, data_execucao, arquivo_log_permanente, caminho_excel)  # caminho_excel: base de dados mostrada no email
                 except Exception as e_email:
                     log_erro(arquivo_log, f"Erro ao enviar relatório por email: {e_email}")
 

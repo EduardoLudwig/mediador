@@ -1,5 +1,6 @@
 import smtplib
 import os
+import html  # html.escape: evita que caracteres como & e < no caminho da base quebrem o email
 import glob
 import subprocess
 import configparser
@@ -128,32 +129,49 @@ def compactar_pasta_7z(pasta_origem, data_execucao=None):
 
 ################################################################
 
-def montar_corpo_html(qtd_arquivos, data_ref):
-    # Corpo do email em HTML: só o resumo. A leitura completa vai no .7z em anexo.
+# O HTML do email é montado com TABELAS (e não <div>) porque o Outlook para Windows usa o motor do Word,
+# que ignora largura, fundo e espaçamento em <div>. Tabelas funcionam no Outlook, no Gmail e no celular.
+# A fonte é repetida em cada célula porque o Outlook não herda a fonte da tabela de fora.
+FONTE = "font-family: Arial, sans-serif;"
+
+def montar_corpo_html(qtd_arquivos, data_ref, caminho_base=None):
+    # Corpo do email em HTML: base de dados usada e o resumo. A leitura completa vai no .7z em anexo.
     # Os estilos vão dentro de cada tag (style="...") porque os programas de email ignoram CSS separado
-    verde = "#1C5A24"  # mesmo verde da interface do robô
+    verde = "#0F3B17"  # verde bem escuro, para diferenciar do email do robô CCTs ComuniQ
 
-    estilo_texto = "padding: 10px 0; border-bottom: 1px solid #eeeeee; font-size: 15px;"
-    estilo_numero = "padding: 10px 0; border-bottom: 1px solid #eeeeee; font-size: 20px; font-weight: bold; text-align: right;"
+    # Base de dados (planilha Excel) que o robô leu. Só aparece se o caminho for informado
+    base_html = ""
+    if caminho_base:
+        caminho_exibido = html.escape(os.path.normpath(caminho_base))  # normpath: mostra com '\' como no Windows
+        base_html = f"""
+      <div style="font-size: 13px; color: #666666;">Base de dados utilizada:</div>
+      <p style="margin: 0 0 16px 0; font-size: 13px; color: #333333;">{caminho_exibido}</p>"""
 
+    # width="600" é a largura que o Outlook respeita (não estica até a janela);
+    # max-width: 100% deixa os outros programas e o celular encolherem quando a tela for menor
     return f"""
-<div style="font-family: Arial, sans-serif; max-width: 560px; border: 1px solid #dddddd;">
-  <div style="background-color: {verde}; color: #ffffff; padding: 18px 24px;">
-    <div style="font-size: 20px; font-weight: bold;">Relatório do Robô Mediador</div>
-    <div style="font-size: 14px;">Leitura de {data_ref.strftime('%d/%m/%Y')}</div>
-  </div>
-  <div style="padding: 20px 24px; color: #333333;">
-    <p style="font-size: 15px;">Olá,</p>
-    <p style="font-size: 15px;">Segue em anexo a leitura completa do Robô Mediador.</p>
-    <table style="width: 100%; border-collapse: collapse;">
-      <tr>
-        <td style="{estilo_texto}">Arquivos baixados</td>
-        <td style="{estilo_numero} color: {verde};">{qtd_arquivos}</td>
-      </tr>
-    </table>
-    <p style="font-size: 15px; margin-top: 24px;">Att,<br>Robô Mediador</p>
-  </div>
-</div>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 100%; border: 1px solid #dddddd;">
+  <tr>
+    <td bgcolor="{verde}" style="background-color: {verde}; padding: 18px 24px; {FONTE}">
+      <div style="font-size: 20px; font-weight: bold; color: #ffffff;">Relatório do Robô Mediador</div>
+      <div style="font-size: 14px; color: #E3F1E8; padding-top: 6px;">Download das Convenções Coletivas de Trabalho das lojas no Mediador</div>
+      <div style="font-size: 14px; color: #E3F1E8;">{data_ref.strftime('%d/%m/%Y')}</div>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding: 20px 24px; {FONTE} color: #333333;">{base_html}
+      <p style="margin: 0 0 8px 0; font-size: 15px; color: #333333;">Olá,</p>
+      <p style="margin: 0 0 12px 0; font-size: 15px; color: #333333;">Segue em anexo a leitura completa do Robô Mediador.</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="padding: 10px 0; border-bottom: 1px solid #eeeeee; {FONTE} font-size: 15px; font-weight: bold; color: #333333;">Arquivos baixados</td>
+          <td width="60" align="right" style="padding: 10px 0; border-bottom: 1px solid #eeeeee; {FONTE} font-size: 22px; font-weight: bold; color: {verde};">{qtd_arquivos}</td>
+        </tr>
+      </table>
+      <p style="margin: 24px 0 0 0; font-size: 15px; color: #333333;">Att,<br>Robô Mediador</p>
+    </td>
+  </tr>
+</table>
 """
 
 ################################################################
@@ -174,7 +192,8 @@ def _log_erro_email(arquivo_log, mensagem):
 
 ################################################################
 
-def enviar_relatorio(mediador_dir, data_execucao=None, arquivo_log=None):
+def enviar_relatorio(mediador_dir, data_execucao=None, arquivo_log=None, caminho_base=None):
+    # caminho_base: planilha Excel usada na leitura; aparece no corpo do email (opcional)
     try:
         remetente, senha, destinatarios = carregar_config_email() # devolve tupla de 3 elementos
     except (FileNotFoundError, KeyError, ValueError) as e: # cobre cenários de falha
@@ -216,7 +235,7 @@ def enviar_relatorio(mediador_dir, data_execucao=None, arquivo_log=None):
     msg["To"] = ", ".join(destinatarios)
     msg["Subject"] = f"Relatório Robô Mediador - {data_formatada}"
 
-    corpo = montar_corpo_html(qtd_arquivos, data_ref)
+    corpo = montar_corpo_html(qtd_arquivos, data_ref, caminho_base)
 
     msg.attach(MIMEText(corpo, "html", "utf-8"))
 
